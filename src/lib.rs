@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
+use zstd::stream::write::Encoder as ZstdEncoder;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -99,10 +100,20 @@ impl<'lua> DcsWorldObject {
 
 impl<'lua> DcsWorldUnit {
     fn from_lua_with_id(id: i32, table: LuaTable<'lua>) -> mlua::Result<Self> {
+        let unit_name: String = match table.get("UnitName") {
+            Err(_e) => "NoName".to_string(),
+            Ok(val) => val,
+        };
+
+        let group_name: String = match table.get("GroupName") {
+            Err(_e) => "NoName".to_string(),
+            Ok(val) => val,
+        };
+
         Ok(Self {
             object: DcsWorldObject::from_lua_with_id(id, &table).unwrap(),
-            unit_name: table.get("UnitName").unwrap(),
-            group_name: table.get("GroupName").unwrap(),
+            unit_name: unit_name,
+            group_name: group_name,
         })
     }
 }
@@ -112,6 +123,7 @@ enum Message {
     NewFrame(i32, f64),
     BallisticsStateUpdate(Vec<DcsWorldObject>),
     UnitStateUpdate(Vec<DcsWorldUnit>),
+    Stop,
 }
 
 struct LuaInterface {
@@ -131,7 +143,7 @@ fn get_lua_interface() -> &'static mut LuaInterface {
 }
 
 fn send_message(message: Message) {
-    log::trace!("sending message {:?}", message);
+    log::debug!("sending message {:?}", message);
     get_lua_interface()
         .tx
         .send(message)
@@ -197,17 +209,23 @@ pub fn on_frame_end(_lua: &Lua, _: ()) -> LuaResult<()> {
     Ok(())
 }
 
+#[no_mangle]
+pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
+    send_message(Message::Stop);
+    Ok(())
+}
+
 #[mlua::lua_module]
 pub fn dcs_tetrad(lua: &Lua) -> LuaResult<LuaTable> {
     let exports = lua.create_table()?;
     exports.set("start", lua.create_function(start)?)?;
     exports.set("on_frame_begin", lua.create_function(on_frame_begin)?)?;
     exports.set("on_frame_end", lua.create_function(on_frame_end)?)?;
-    // exports.set("stop", lua.create_function(stop)?)?;
+    exports.set("stop", lua.create_function(stop)?)?;
     Ok(exports)
 }
 
-fn log_object(frame_count: i32, frame_time: f64, file: &mut File, o: &DcsWorldObject) {
+fn log_object<T: Write>(frame_count: i32, frame_time: f64, file: &mut T, o: &DcsWorldObject) {
     write!(
         file,
         "{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},,\n",
@@ -230,7 +248,7 @@ fn log_object(frame_count: i32, frame_time: f64, file: &mut File, o: &DcsWorldOb
     .unwrap();
 }
 
-fn log_unit(frame_count: i32, frame_time: f64, file: &mut File, unit: &DcsWorldUnit) {
+fn log_unit<T: Write>(frame_count: i32, frame_time: f64, file: &mut T, unit: &DcsWorldUnit) {
     write!(
         file,
         "{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},{},{}\n",
@@ -259,18 +277,18 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
     let mut most_recent_time: f64 = 0.0;
     let mut frame_count: i32 = 0;
     let dir_name = Path::new(write_dir.as_str());
-    let fname = dir_name.join("tetrad_frame_log.csv");
+    let fname = dir_name.join("tetrad_frame_log.csv.zstd");
     log::debug!("Trying to open csv file: {:?}", fname);
 
-    let mut csv_file = match File::create(&fname) {
+    let csv_file = match File::create(&fname) {
         Err(why) => {
             log::error!("Couldn't open file {:?} because {}", fname, why);
             panic!("failed")
         }
         Ok(file) => file,
     };
+    let mut encoder = ZstdEncoder::new(csv_file, 10).unwrap();
 
-    csv_file.flush().unwrap();
     loop {
         log::trace!("Waiting for message");
         let msg = rx.recv().expect("Should be able to receive a message");
@@ -282,17 +300,21 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
             Message::BallisticsStateUpdate(objects) => {
                 log::trace!("Logging Ballistics message with {} elements", objects.len());
                 for obj in objects.into_iter() {
-                    log_object(frame_count, most_recent_time, &mut csv_file, &obj);
+                    log_object(frame_count, most_recent_time, &mut encoder, &obj);
                 }
             }
             Message::UnitStateUpdate(objects) => {
                 log::trace!("Logging Units message with {} elements", objects.len());
                 for obj in objects.into_iter() {
-                    log_unit(frame_count, most_recent_time, &mut csv_file, &obj);
+                    log_unit(frame_count, most_recent_time, &mut encoder, &obj);
                 }
+            }
+            Message::Stop => {
+                break;
             }
         }
     }
+    encoder.finish().unwrap();
 }
 
 fn get_model_time(lua: &Lua) -> f64 {
