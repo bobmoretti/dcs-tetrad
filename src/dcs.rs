@@ -97,52 +97,47 @@ impl<'lua> DcsWorldUnit {
     }
 }
 
-pub fn log_object<T: Write>(frame_count: i32, frame_time: f64, file: &mut T, o: &DcsWorldObject) {
-    write!(
-        file,
-        "{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},,\n",
-        frame_count,
-        frame_time,
-        o.name,
-        o.country,
-        o.coalition,
-        o.coalition_id,
-        o.lat_lon_alt.lat,
-        o.lat_lon_alt.lon,
-        o.lat_lon_alt.alt,
-        o.heading,
-        o.pitch,
-        o.bank,
-        o.position.x,
-        o.position.y,
-        o.position.z
-    )
-    .unwrap();
+#[derive(Debug, Clone, Serialize)]
+struct FrameObjectRecord<'a> {
+    frame_count: i32,
+    frame_time: f64,
+    obj: &'a DcsWorldObject,
+    unit_name: &'a str,
+    group_name: &'a str,
 }
 
-pub fn log_unit<T: Write>(frame_count: i32, frame_time: f64, file: &mut T, unit: &DcsWorldUnit) {
-    write!(
-        file,
-        "{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},{},{}\n",
-        frame_count,
-        frame_time,
-        unit.object.name,
-        unit.object.country,
-        unit.object.coalition,
-        unit.object.coalition_id,
-        unit.object.lat_lon_alt.lat,
-        unit.object.lat_lon_alt.lon,
-        unit.object.lat_lon_alt.alt,
-        unit.object.heading,
-        unit.object.pitch,
-        unit.object.bank,
-        unit.object.position.x,
-        unit.object.position.y,
-        unit.object.position.z,
-        unit.unit_name,
-        unit.group_name,
-    )
-    .unwrap();
+pub fn log_object<W: Write>(
+    frame_count: i32,
+    frame_time: f64,
+    writer: &mut csv::Writer<W>,
+    o: &DcsWorldObject,
+) {
+    writer
+        .serialize(FrameObjectRecord {
+            frame_count,
+            frame_time,
+            obj: o,
+            unit_name: "",
+            group_name: "",
+        })
+        .unwrap();
+}
+
+pub fn log_unit<W: Write>(
+    frame_count: i32,
+    frame_time: f64,
+    writer: &mut csv::Writer<W>,
+    unit: &DcsWorldUnit,
+) {
+    writer
+        .serialize(FrameObjectRecord {
+            frame_count,
+            frame_time,
+            obj: &unit.object,
+            unit_name: unit.unit_name.as_str(),
+            group_name: unit.group_name.as_str(),
+        })
+        .unwrap();
 }
 
 pub fn get_model_time(lua: &Lua) -> f64 {

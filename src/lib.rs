@@ -19,7 +19,6 @@ pub struct Config {
     pub debug: bool,
 }
 
-
 impl<'lua> mlua::FromLua<'lua> for Config {
     fn from_lua(lua_value: mlua::Value<'lua>, lua: &'lua mlua::Lua) -> mlua::Result<Self> {
         use mlua::LuaSerdeExt;
@@ -27,7 +26,6 @@ impl<'lua> mlua::FromLua<'lua> for Config {
         Ok(config)
     }
 }
-
 
 #[derive(Debug)]
 enum Message {
@@ -52,7 +50,6 @@ fn get_lib_state() -> &'static mut LibState {
 fn increment_frame_count() {
     get_lib_state().frame_count += 1;
 }
-
 
 fn send_message(message: Message) {
     log::debug!("sending message {:?}", message);
@@ -152,6 +149,7 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
         Ok(file) => file,
     };
     let mut encoder = ZstdEncoder::new(csv_file, 10).unwrap();
+    let mut csv_writer = csv::Writer::from_writer(&mut encoder);
 
     loop {
         log::trace!("Waiting for message");
@@ -164,13 +162,13 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
             Message::BallisticsStateUpdate(objects) => {
                 log::trace!("Logging Ballistics message with {} elements", objects.len());
                 for obj in objects.into_iter() {
-                    dcs::log_object(frame_count, most_recent_time, &mut encoder, &obj);
+                    dcs::log_object(frame_count, most_recent_time, &mut csv_writer, &obj);
                 }
             }
             Message::UnitStateUpdate(objects) => {
                 log::trace!("Logging Units message with {} elements", objects.len());
                 for obj in objects.into_iter() {
-                    dcs::log_unit(frame_count, most_recent_time, &mut encoder, &obj);
+                    dcs::log_unit(frame_count, most_recent_time, &mut csv_writer, &obj);
                 }
             }
             Message::Stop => {
@@ -178,7 +176,7 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
             }
         }
     }
-    encoder.finish().unwrap();
+    csv_writer.flush().unwrap();
 }
 
 #[cfg(test)]

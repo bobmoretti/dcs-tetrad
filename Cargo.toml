@@ -1,13 +1,14 @@
 [package]
 edition = "2021"
 name = "dcs-tetrad"
-rust-version = "1.63"
+rust-version = "1.64"
 version = "0.1.0"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
+csv = "1.1.6"
 log = "0.4.17"
 log-panics = {version = "2", features = ["with-backtrace"]}
 mlua = {version = "0.8", default-features = false, features = ["lua51", "module", "serialize"]}
