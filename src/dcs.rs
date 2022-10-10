@@ -101,7 +101,6 @@ impl<'lua> DcsWorldUnit {
 struct FrameObjectRecord<'a> {
     frame_count: i32,
     frame_time: f64,
-    obj: &'a DcsWorldObject,
     unit_name: &'a str,
     group_name: &'a str,
 }
@@ -110,16 +109,18 @@ pub fn log_object<W: Write>(
     frame_count: i32,
     frame_time: f64,
     writer: &mut csv::Writer<W>,
-    o: &DcsWorldObject,
+    dcs_object: &DcsWorldObject,
 ) {
     writer
-        .serialize(FrameObjectRecord {
-            frame_count,
-            frame_time,
-            obj: o,
-            unit_name: "",
-            group_name: "",
-        })
+        .serialize((
+            FrameObjectRecord {
+                frame_count,
+                frame_time,
+                unit_name: "",
+                group_name: "",
+            },
+            dcs_object,
+        ))
         .unwrap();
 }
 
@@ -130,23 +131,27 @@ pub fn log_unit<W: Write>(
     unit: &DcsWorldUnit,
 ) {
     writer
-        .serialize(FrameObjectRecord {
-            frame_count,
-            frame_time,
-            obj: &unit.object,
-            unit_name: unit.unit_name.as_str(),
-            group_name: unit.group_name.as_str(),
-        })
+        .serialize((
+            FrameObjectRecord {
+                frame_count,
+                frame_time,
+                unit_name: unit.unit_name.as_str(),
+                group_name: unit.group_name.as_str(),
+            },
+            &unit.object,
+        ))
         .unwrap();
 }
 
 pub fn get_model_time(lua: &Lua) -> f64 {
-    let get_model_time: LuaFunction = lua.globals().get("LoGetModelTime").unwrap();
+    let export: LuaTable = lua.globals().get("Export").unwrap();
+    let get_model_time: LuaFunction = export.get("LoGetModelTime").unwrap();
     get_model_time.call::<_, f64>(()).unwrap()
 }
 
 pub fn get_lo_get_world_objects(lua: &Lua) -> LuaFunction {
-    lua.globals().get("LoGetWorldObjects").unwrap()
+    let export: LuaTable = lua.globals().get("Export").unwrap();
+    export.get("LoGetWorldObjects").unwrap()
 }
 
 pub fn get_ballistics_objects(lua: &Lua) -> Vec<DcsWorldObject> {
@@ -173,4 +178,10 @@ pub fn get_unit_objects(lua: &Lua) -> Vec<DcsWorldUnit> {
     }
     log::trace!("got {} unit elements", v.len());
     v
+}
+
+pub fn get_mission_name(lua: &Lua) -> String {
+    let dcs: LuaTable = lua.globals().get("DCS").unwrap();
+    let get_mission_name: LuaFunction = dcs.get("getMissionName").unwrap();
+    get_mission_name.call::<_, String>(()).unwrap()
 }

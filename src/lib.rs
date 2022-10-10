@@ -27,12 +27,29 @@ impl<'lua> mlua::FromLua<'lua> for Config {
     }
 }
 
-#[derive(Debug)]
 enum Message {
     NewFrame(i32, f64),
     BallisticsStateUpdate(Vec<DcsWorldObject>),
     UnitStateUpdate(Vec<DcsWorldUnit>),
     Stop,
+}
+
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NewFrame(arg0, arg1) => {
+                f.debug_tuple("NewFrame").field(arg0).field(arg1).finish()
+            }
+            Self::BallisticsStateUpdate(objs) => f.write_fmt(format_args!(
+                "BallisticsStateUpdate with {} objects",
+                objs.len()
+            )),
+            Self::UnitStateUpdate(units) => {
+                f.write_fmt(format_args!("UnitStateUpdate with {} objects", units.len()))
+            }
+            Self::Stop => write!(f, "Stop"),
+        }
+    }
 }
 
 struct LibState {
@@ -52,7 +69,7 @@ fn increment_frame_count() {
 }
 
 fn send_message(message: Message) {
-    log::debug!("sending message {:?}", message);
+    log::trace!("sending message {:?}", message);
     get_lib_state()
         .tx
         .send(message)
@@ -76,7 +93,16 @@ fn init(config: &Config) {
 }
 
 #[no_mangle]
-pub fn start(_: &Lua, config: Config) -> LuaResult<()> {
+pub fn start(lua: &Lua, config: Config) -> LuaResult<()> {
+    unsafe {
+        if LIB_STATE.is_some() {
+            log::info!("Library already created!!!");
+            return Ok(());
+        } else {
+            log::info!("Called for the very first time!");
+        }
+    }
+
     init(&config);
     log::info!("Creating channel");
 
@@ -89,9 +115,12 @@ pub fn start(_: &Lua, config: Config) -> LuaResult<()> {
         });
     }
 
+    let mission_name = dcs::get_mission_name(lua);
+    log::info!("Loaded in mission {}", mission_name);
+
     std::thread::spawn(|| {
         log::info!("Spawning worker thread");
-        worker_entry(config.write_dir, rx);
+        worker_entry(config.write_dir, mission_name, rx);
     });
 
     Ok(())
@@ -134,11 +163,17 @@ pub fn dcs_tetrad(lua: &Lua) -> LuaResult<LuaTable> {
     Ok(exports)
 }
 
-fn worker_entry(write_dir: String, rx: Receiver<Message>) {
+fn format_now() -> String {
+    let date = chrono::Local::now();
+    date.format("%Y-%m-%d %H-%M-%S").to_string()
+}
+
+fn worker_entry(write_dir: String, mission_name: String, rx: Receiver<Message>) {
     let mut most_recent_time: f64 = 0.0;
     let mut frame_count: i32 = 0;
-    let dir_name = Path::new(write_dir.as_str());
-    let fname = dir_name.join("tetrad_frame_log.csv.zstd");
+    let dir_name = Path::new(write_dir.as_str()).join("Logs").join("Tetrad");
+    std::fs::create_dir_all(&dir_name).unwrap();
+    let fname = dir_name.join(format!("{} - {}.csv.zstd", mission_name, format_now()));
     log::debug!("Trying to open csv file: {:?}", fname);
 
     let csv_file = match File::create(&fname) {
@@ -149,7 +184,9 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
         Ok(file) => file,
     };
     let mut encoder = ZstdEncoder::new(csv_file, 10).unwrap();
-    let mut csv_writer = csv::Writer::from_writer(&mut encoder);
+    let mut csv_writer = csv::WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(&mut encoder);
 
     loop {
         log::trace!("Waiting for message");
@@ -172,10 +209,12 @@ fn worker_entry(write_dir: String, rx: Receiver<Message>) {
                 }
             }
             Message::Stop => {
+                log::debug!("Stopping!");
                 break;
             }
         }
     }
+    log::debug!("finishing csv file!");
     csv_writer.flush().unwrap();
 }
 
