@@ -1,7 +1,7 @@
 use crate::dcs;
 use crate::dcs::DcsWorldObject;
 use crate::dcs::DcsWorldUnit;
-use crate::types::Config;
+use crate::config::Config;
 use std::fs::File;
 use std::path::Path;
 use std::sync::mpsc::Receiver;

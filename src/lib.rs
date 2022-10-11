@@ -3,7 +3,7 @@ use mlua::Lua;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 mod dcs;
-mod types;
+mod config;
 pub mod worker;
 
 struct LibState {
@@ -11,10 +11,10 @@ struct LibState {
     tx: Sender<worker::Message>,
 }
 
-impl<'lua> mlua::FromLua<'lua> for types::Config {
+impl<'lua> mlua::FromLua<'lua> for config::Config {
     fn from_lua(lua_value: mlua::Value<'lua>, lua: &'lua mlua::Lua) -> mlua::Result<Self> {
         use mlua::LuaSerdeExt;
-        let config: types::Config = lua.from_value(lua_value)?;
+        let config: config::Config = lua.from_value(lua_value)?;
         Ok(config)
     }
 }
@@ -33,7 +33,7 @@ fn send_message(message: worker::Message) {
         .expect("Should be able to send message");
 }
 
-fn setup_logging(config: &types::Config) {
+fn setup_logging(config: &config::Config) {
     use log::LevelFilter;
     let level = if config.debug {
         LevelFilter::Debug
@@ -52,7 +52,7 @@ fn setup_logging(config: &types::Config) {
     log_panics::init();
 }
 
-fn init(config: &types::Config) {
+fn init(config: &config::Config) {
     static mut FIRST_TIME: bool = true;
     unsafe {
         if FIRST_TIME {
@@ -64,7 +64,7 @@ fn init(config: &types::Config) {
 }
 
 #[no_mangle]
-pub fn start(lua: &Lua, config: types::Config) -> LuaResult<()> {
+pub fn start(lua: &Lua, config: config::Config) -> LuaResult<()> {
     unsafe {
         if LIB_STATE.is_some() {
             log::info!("Called start() with library already created");
