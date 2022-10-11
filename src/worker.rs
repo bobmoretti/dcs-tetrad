@@ -8,7 +8,7 @@ use std::sync::mpsc::Receiver;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 pub enum Message {
-    NewFrame(i32, f64),
+    NewFrame(f64),
     BallisticsStateUpdate(Vec<DcsWorldObject>),
     UnitStateUpdate(Vec<DcsWorldUnit>),
     Stop,
@@ -17,9 +17,7 @@ pub enum Message {
 impl std::fmt::Debug for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NewFrame(arg0, arg1) => {
-                f.debug_tuple("NewFrame").field(arg0).field(arg1).finish()
-            }
+            Self::NewFrame(arg0) => f.debug_tuple("NewFrame").field(arg0).finish(),
             Self::BallisticsStateUpdate(objs) => f.write_fmt(format_args!(
                 "BallisticsStateUpdate with {} objects",
                 objs.len()
@@ -94,9 +92,10 @@ pub fn entry(config: Config, mission_name: String, rx: Receiver<Message>) {
         log::trace!("Waiting for message");
         let msg = rx.recv().expect("Should be able to receive a message");
         match msg {
-            Message::NewFrame(n, t) => {
+            Message::NewFrame(t) => {
+                frame_count += 1;
                 most_recent_time = t;
-                frame_count = n;
+                log::trace!("New frame message, n = {}, t = {}", frame_count, t);
             }
             Message::BallisticsStateUpdate(objects) => {
                 log::trace!("Logging Ballistics message with {} elements", objects.len());

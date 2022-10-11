@@ -8,7 +8,6 @@ pub mod worker;
 
 struct LibState {
     // time before integer overflow > 1 year @ 120 FPS
-    frame_count: i32,
     tx: Sender<worker::Message>,
 }
 
@@ -26,10 +25,6 @@ fn get_lib_state() -> &'static mut LibState {
     unsafe { LIB_STATE.as_mut().expect("msg") }
 }
 
-fn increment_frame_count() {
-    get_lib_state().frame_count += 1;
-}
-
 fn send_message(message: worker::Message) {
     log::trace!("sending message {:?}", message);
     get_lib_state()
@@ -38,19 +33,33 @@ fn send_message(message: worker::Message) {
         .expect("Should be able to send message");
 }
 
-fn init(config: &types::Config) {
+fn setup_logging(config: &types::Config) {
     use log::LevelFilter;
     let level = if config.debug {
         LevelFilter::Debug
     } else {
         LevelFilter::Info
     };
-    let writedir = Path::new(config.write_dir.as_str()).join("Logs");
-    let p = writedir.join("dcs_tetrad.log");
+
+    let logdir = Path::new(config.write_dir.as_str())
+        .join("Logs")
+        .join("Tetrad");
+
+    std::fs::create_dir_all(&logdir).unwrap();
+    let p = logdir.join("dcs_tetrad.log");
     simple_logging::log_to_file(p, level).unwrap();
 
     log_panics::init();
+}
 
+fn init(config: &types::Config) {
+    static mut FIRST_TIME: bool = true;
+    unsafe {
+        if FIRST_TIME {
+            setup_logging(config);
+            FIRST_TIME = false;
+        }
+    }
     log::info!("Initialization complete!");
 }
 
@@ -58,12 +67,12 @@ fn init(config: &types::Config) {
 pub fn start(lua: &Lua, config: types::Config) -> LuaResult<()> {
     unsafe {
         if LIB_STATE.is_some() {
-            log::info!("Library already created!!!");
+            log::info!("Called start() with library already created");
             return Ok(());
-        } else {
-            log::info!("Called for the very first time!");
         }
     }
+
+    log::info!("Starting library");
 
     init(&config);
     log::info!("Creating channel");
@@ -71,10 +80,7 @@ pub fn start(lua: &Lua, config: types::Config) -> LuaResult<()> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     unsafe {
-        LIB_STATE = Some(LibState {
-            frame_count: 0,
-            tx: tx,
-        });
+        LIB_STATE = Some(LibState { tx: tx });
     }
 
     let mission_name = dcs::get_mission_name(lua);
@@ -91,11 +97,9 @@ pub fn start(lua: &Lua, config: types::Config) -> LuaResult<()> {
 
 #[no_mangle]
 pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
-    log::trace!("Frame {} begun!", get_lib_state().frame_count);
-    increment_frame_count();
+    log::trace!("Frame begun!");
     let t = dcs::get_model_time(lua);
-    let n = get_lib_state().frame_count;
-    send_message(worker::Message::NewFrame(n, t));
+    send_message(worker::Message::NewFrame(t));
 
     let ballistics = dcs::get_ballistics_objects(lua);
     send_message(worker::Message::BallisticsStateUpdate(ballistics));
@@ -113,6 +117,9 @@ pub fn on_frame_end(_lua: &Lua, _: ()) -> LuaResult<()> {
 #[no_mangle]
 pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
     send_message(worker::Message::Stop);
+    unsafe {
+        LIB_STATE = None;
+    }
     Ok(())
 }
 
