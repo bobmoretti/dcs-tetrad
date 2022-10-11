@@ -1,6 +1,7 @@
 use crate::dcs;
 use crate::dcs::DcsWorldObject;
 use crate::dcs::DcsWorldUnit;
+use crate::types::Config;
 use std::fs::File;
 use std::path::Path;
 use std::sync::mpsc::Receiver;
@@ -36,11 +37,10 @@ fn format_now() -> String {
     date.format("%Y-%m-%d %H-%M-%S").to_string()
 }
 
-pub fn entry(write_dir: String, mission_name: String, rx: Receiver<Message>) {
-    let mut most_recent_time: f64 = 0.0;
-    let mut frame_count: i32 = 0;
-    let dir_name = Path::new(write_dir.as_str()).join("Logs").join("Tetrad");
-    std::fs::create_dir_all(&dir_name).unwrap();
+fn setup_object_log(
+    mission_name: &String,
+    dir_name: &Path,
+) -> csv::Writer<ZstdEncoder<'static, File>> {
     let fname = dir_name.join(format!("{} - {}.csv.zstd", mission_name, format_now()));
     log::debug!("Trying to open csv file: {:?}", fname);
 
@@ -51,10 +51,44 @@ pub fn entry(write_dir: String, mission_name: String, rx: Receiver<Message>) {
         }
         Ok(file) => file,
     };
-    let mut encoder = ZstdEncoder::new(csv_file, 10).unwrap();
-    let mut csv_writer = csv::WriterBuilder::new()
+    let encoder = ZstdEncoder::new(csv_file, 10).unwrap();
+    let csv_writer = csv::WriterBuilder::new()
         .has_headers(false)
-        .from_writer(&mut encoder);
+        .from_writer(encoder);
+    csv_writer
+}
+
+fn log_dcs_objects<W: std::io::Write, T: dcs::Loggable>(
+    frame_count: i32,
+    t: f64,
+    writer: &mut csv::Writer<W>,
+    objects: Vec<T>,
+) {
+    for obj in objects.into_iter() {
+        obj.log_as_csv(frame_count, t, writer);
+    }
+}
+
+fn finish<W: std::io::Write>(obj: &mut Option<csv::Writer<W>>) {
+    if let Some(ref mut writer) = obj {
+        writer.flush().unwrap();
+    }
+}
+
+pub fn entry(config: Config, mission_name: String, rx: Receiver<Message>) {
+    let mut most_recent_time: f64 = 0.0;
+    let mut frame_count: i32 = 0;
+    let dir_name = Path::new(config.write_dir.as_str())
+        .join("Logs")
+        .join("Tetrad");
+    std::fs::create_dir_all(&dir_name).unwrap();
+    log::debug!("Starting with config {:?}", config);
+
+    let mut csv_writer = if config.enable_object_log {
+        Some(setup_object_log(&mission_name, &dir_name))
+    } else {
+        None
+    };
 
     loop {
         log::trace!("Waiting for message");
@@ -66,14 +100,20 @@ pub fn entry(write_dir: String, mission_name: String, rx: Receiver<Message>) {
             }
             Message::BallisticsStateUpdate(objects) => {
                 log::trace!("Logging Ballistics message with {} elements", objects.len());
-                for obj in objects.into_iter() {
-                    dcs::log_object(frame_count, most_recent_time, &mut csv_writer, &obj);
+                match csv_writer {
+                    Some(ref mut writer) => {
+                        log_dcs_objects(frame_count, most_recent_time, writer, objects)
+                    }
+                    None => (),
                 }
             }
             Message::UnitStateUpdate(objects) => {
                 log::trace!("Logging Units message with {} elements", objects.len());
-                for obj in objects.into_iter() {
-                    dcs::log_unit(frame_count, most_recent_time, &mut csv_writer, &obj);
+                match csv_writer {
+                    Some(ref mut writer) => {
+                        log_dcs_objects(frame_count, most_recent_time, writer, objects)
+                    }
+                    None => (),
                 }
             }
             Message::Stop => {
@@ -83,5 +123,5 @@ pub fn entry(write_dir: String, mission_name: String, rx: Receiver<Message>) {
         }
     }
     log::debug!("finishing csv file!");
-    csv_writer.flush().unwrap();
+    finish(&mut csv_writer);
 }

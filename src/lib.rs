@@ -1,32 +1,23 @@
 use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::mpsc::Sender;
 mod dcs;
+mod types;
 pub mod worker;
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Config {
-    pub write_dir: String,
-    pub lua_path: String,
-    pub dll_path: String,
-    #[serde(default)]
-    pub debug: bool,
-}
-
-impl<'lua> mlua::FromLua<'lua> for Config {
-    fn from_lua(lua_value: mlua::Value<'lua>, lua: &'lua mlua::Lua) -> mlua::Result<Self> {
-        use mlua::LuaSerdeExt;
-        let config: Config = lua.from_value(lua_value)?;
-        Ok(config)
-    }
-}
 
 struct LibState {
     // time before integer overflow > 1 year @ 120 FPS
     frame_count: i32,
     tx: Sender<worker::Message>,
+}
+
+impl<'lua> mlua::FromLua<'lua> for types::Config {
+    fn from_lua(lua_value: mlua::Value<'lua>, lua: &'lua mlua::Lua) -> mlua::Result<Self> {
+        use mlua::LuaSerdeExt;
+        let config: types::Config = lua.from_value(lua_value)?;
+        Ok(config)
+    }
 }
 
 static mut LIB_STATE: Option<LibState> = None;
@@ -47,14 +38,14 @@ fn send_message(message: worker::Message) {
         .expect("Should be able to send message");
 }
 
-fn init(config: &Config) {
+fn init(config: &types::Config) {
     use log::LevelFilter;
     let level = if config.debug {
         LevelFilter::Debug
     } else {
         LevelFilter::Info
     };
-    let writedir = Path::new(config.write_dir.as_str());
+    let writedir = Path::new(config.write_dir.as_str()).join("Logs");
     let p = writedir.join("dcs_tetrad.log");
     simple_logging::log_to_file(p, level).unwrap();
 
@@ -64,7 +55,7 @@ fn init(config: &Config) {
 }
 
 #[no_mangle]
-pub fn start(lua: &Lua, config: Config) -> LuaResult<()> {
+pub fn start(lua: &Lua, config: types::Config) -> LuaResult<()> {
     unsafe {
         if LIB_STATE.is_some() {
             log::info!("Library already created!!!");
@@ -88,10 +79,11 @@ pub fn start(lua: &Lua, config: Config) -> LuaResult<()> {
 
     let mission_name = dcs::get_mission_name(lua);
     log::info!("Loaded in mission {}", mission_name);
+    let worker_cfg = config.clone();
 
     std::thread::spawn(|| {
         log::info!("Spawning worker thread");
-        worker::entry(config.write_dir, mission_name, rx);
+        worker::entry(worker_cfg, mission_name, rx);
     });
 
     Ok(())

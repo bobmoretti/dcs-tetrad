@@ -38,6 +38,10 @@ pub struct DcsWorldUnit {
     group_name: String,
 }
 
+pub trait Loggable {
+    fn log_as_csv<W: Write>(self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>);
+}
+
 impl<'lua> DcsWorldObject {
     pub fn from_lua_with_id(id: i32, table: &LuaTable<'lua>) -> mlua::Result<Self> {
         let lat_lon_alt = match table.get("LatLongAlt").unwrap() {
@@ -105,42 +109,36 @@ struct FrameObjectRecord<'a> {
     group_name: &'a str,
 }
 
-pub fn log_object<W: Write>(
-    frame_count: i32,
-    frame_time: f64,
-    writer: &mut csv::Writer<W>,
-    dcs_object: &DcsWorldObject,
-) {
-    writer
-        .serialize((
-            FrameObjectRecord {
-                frame_count,
-                frame_time,
-                unit_name: "",
-                group_name: "",
-            },
-            dcs_object,
-        ))
-        .unwrap();
+impl Loggable for DcsWorldObject {
+    fn log_as_csv<W: Write>(self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
+        writer
+            .serialize((
+                FrameObjectRecord {
+                    frame_count,
+                    frame_time,
+                    unit_name: "",
+                    group_name: "",
+                },
+                self,
+            ))
+            .unwrap();
+    }
 }
 
-pub fn log_unit<W: Write>(
-    frame_count: i32,
-    frame_time: f64,
-    writer: &mut csv::Writer<W>,
-    unit: &DcsWorldUnit,
-) {
-    writer
-        .serialize((
-            FrameObjectRecord {
-                frame_count,
-                frame_time,
-                unit_name: unit.unit_name.as_str(),
-                group_name: unit.group_name.as_str(),
-            },
-            &unit.object,
-        ))
-        .unwrap();
+impl Loggable for DcsWorldUnit {
+    fn log_as_csv<W: Write>(self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
+        writer
+            .serialize((
+                FrameObjectRecord {
+                    frame_count,
+                    frame_time,
+                    unit_name: self.unit_name.as_str(),
+                    group_name: self.group_name.as_str(),
+                },
+                &self.object,
+            ))
+            .unwrap();
+    }
 }
 
 pub fn get_model_time(lua: &Lua) -> f64 {
