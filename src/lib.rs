@@ -40,7 +40,7 @@ fn send_gui_message(message: gui::Message) {
     get_lib_state().gui_tx.send(message).unwrap();
 }
 
-fn setup_logging(config: &config::Config) {
+fn setup_logging(config: &config::Config) -> Result<(), fern::InitError> {
     use log::LevelFilter;
     let level = if config.debug {
         LevelFilter::Debug
@@ -54,34 +54,59 @@ fn setup_logging(config: &config::Config) {
 
     std::fs::create_dir_all(&logdir).unwrap();
     let p = logdir.join("dcs_tetrad.log");
-    simple_logging::log_to_file(p, level).unwrap();
+
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(level)
+        .level_for("wgpu_core", LevelFilter::Info)
+        .level_for("naga", LevelFilter::Info)
+        .chain(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(p)?,
+        )
+        .apply()?;
 
     log_panics::init();
+    Ok(())
 }
 
-fn init(config: &config::Config) {
+fn init(config: &config::Config) -> Result<(), fern::InitError> {
     static mut FIRST_TIME: bool = true;
     unsafe {
         if FIRST_TIME {
-            setup_logging(config);
+            setup_logging(config)?;
             FIRST_TIME = false;
         }
     }
     log::info!("Initialization complete!");
+    Ok(())
 }
 
 #[no_mangle]
-pub fn start(lua: &Lua, config: config::Config) -> LuaResult<()> {
+pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     unsafe {
         if LIB_STATE.is_some() {
             log::info!("Called start() with library already created");
-            return Ok(());
+            return Ok(-1);
         }
     }
 
     log::info!("Starting library");
 
-    init(&config);
+    if let Err(_e) = init(&config) {
+        return Ok(-2);
+    }
+
     log::info!("Creating channel");
 
     let (gui_tx, gui_rx) = std::sync::mpsc::channel();
@@ -107,7 +132,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<()> {
         worker::entry(worker_cfg, mission_name, worker_rx);
     });
 
-    Ok(())
+    Ok(0)
 }
 
 #[no_mangle]
