@@ -2,13 +2,15 @@ use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
 use std::path::Path;
 use std::sync::mpsc::Sender;
-mod dcs;
 mod config;
+mod dcs;
+mod gui;
 pub mod worker;
 
 struct LibState {
     // time before integer overflow > 1 year @ 120 FPS
-    tx: Sender<worker::Message>,
+    worker_tx: Sender<worker::Message>,
+    gui_tx: Sender<gui::Message>,
 }
 
 impl<'lua> mlua::FromLua<'lua> for config::Config {
@@ -25,12 +27,17 @@ fn get_lib_state() -> &'static mut LibState {
     unsafe { LIB_STATE.as_mut().expect("msg") }
 }
 
-fn send_message(message: worker::Message) {
-    log::trace!("sending message {:?}", message);
+fn send_worker_message(message: worker::Message) {
+    log::trace!("sending message {:?} to worker", message);
     get_lib_state()
-        .tx
+        .worker_tx
         .send(message)
         .expect("Should be able to send message");
+}
+
+fn send_gui_message(message: gui::Message) {
+    log::trace!("sending message to gui: {:?}", message);
+    get_lib_state().gui_tx.send(message).unwrap();
 }
 
 fn setup_logging(config: &config::Config) {
@@ -77,10 +84,18 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<()> {
     init(&config);
     log::info!("Creating channel");
 
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (gui_tx, gui_rx) = std::sync::mpsc::channel();
+    if config.enable_gui {
+        gui::run(gui_rx);
+    }
+
+    let (worker_tx, worker_rx) = std::sync::mpsc::channel();
 
     unsafe {
-        LIB_STATE = Some(LibState { tx: tx });
+        LIB_STATE = Some(LibState {
+            worker_tx: worker_tx,
+            gui_tx: gui_tx,
+        });
     }
 
     let mission_name = dcs::get_mission_name(lua);
@@ -89,7 +104,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<()> {
 
     std::thread::spawn(|| {
         log::info!("Spawning worker thread");
-        worker::entry(worker_cfg, mission_name, rx);
+        worker::entry(worker_cfg, mission_name, worker_rx);
     });
 
     Ok(())
@@ -99,13 +114,13 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<()> {
 pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     log::trace!("Frame begun!");
     let t = dcs::get_model_time(lua);
-    send_message(worker::Message::NewFrame(t));
+    send_worker_message(worker::Message::NewFrame(t));
 
     let ballistics = dcs::get_ballistics_objects(lua);
-    send_message(worker::Message::BallisticsStateUpdate(ballistics));
+    send_worker_message(worker::Message::BallisticsStateUpdate(ballistics));
 
     let units = dcs::get_unit_objects(lua);
-    send_message(worker::Message::UnitStateUpdate(units));
+    send_worker_message(worker::Message::UnitStateUpdate(units));
     Ok(())
 }
 
@@ -116,7 +131,7 @@ pub fn on_frame_end(_lua: &Lua, _: ()) -> LuaResult<()> {
 
 #[no_mangle]
 pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
-    send_message(worker::Message::Stop);
+    send_worker_message(worker::Message::Stop);
     unsafe {
         LIB_STATE = None;
     }
