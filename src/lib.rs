@@ -2,15 +2,58 @@ use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
 use std::path::Path;
 use std::sync::mpsc::Sender;
+use std::thread::JoinHandle;
 mod config;
 mod dcs;
 mod gui;
 pub mod worker;
 
-struct LibState {
-    // time before integer overflow > 1 year @ 120 FPS
+struct FullState {
     worker_tx: Sender<worker::Message>,
+    worker_join: JoinHandle<()>,
     gui_tx: Sender<gui::Message>,
+}
+
+enum LibState {
+    GuiStarted(Sender<gui::Message>),
+    WorkerStarted(FullState),
+}
+
+impl LibState {
+    fn init(config: &config::Config) -> LuaResult<Self> {
+        log::info!("Starting library");
+        if let Err(_e) = setup_logging(&config) {
+            return Err(mlua::Error::RuntimeError(
+                "Coulnd't set up logging, very sad.".into(),
+            ));
+        }
+
+        let (gui_tx, gui_rx) = std::sync::mpsc::channel();
+
+        let state = LibState::GuiStarted(gui_tx);
+
+        if config.enable_gui {
+            gui::run(gui_rx);
+        }
+        Ok(state)
+    }
+
+    fn init_worker(self, config: config::Config, mission_name: String) -> Self {
+        let (worker_tx, worker_rx) = std::sync::mpsc::channel();
+        let worker_join = std::thread::spawn(|| {
+            log::info!("Spawning worker thread");
+            worker::entry(config, mission_name, worker_rx);
+        });
+
+        match self {
+            Self::GuiStarted(gui_tx) => Self::WorkerStarted(FullState {
+                worker_tx,
+                worker_join,
+                gui_tx,
+            }),
+            Self::WorkerStarted { .. } => panic!("Worker already started"),
+        }
+    }
 }
 
 impl<'lua> mlua::FromLua<'lua> for config::Config {
@@ -23,8 +66,12 @@ impl<'lua> mlua::FromLua<'lua> for config::Config {
 
 static mut LIB_STATE: Option<LibState> = None;
 
-fn get_lib_state() -> &'static mut LibState {
-    unsafe { LIB_STATE.as_mut().expect("msg") }
+fn get_lib_state() -> &'static mut FullState {
+    if let Some(LibState::WorkerStarted(fs)) = unsafe { LIB_STATE.as_mut() } {
+        fs
+    } else {
+        panic!("Attempted to get lib full state before it was initialized.");
+    }
 }
 
 fn send_worker_message(message: worker::Message) {
@@ -77,60 +124,33 @@ fn setup_logging(config: &config::Config) -> Result<(), fern::InitError> {
         .apply()?;
 
     log_panics::init();
-    Ok(())
-}
+    log::info!("Initialization of logging complete!");
 
-fn init(config: &config::Config) -> Result<(), fern::InitError> {
-    static mut FIRST_TIME: bool = true;
-    unsafe {
-        if FIRST_TIME {
-            setup_logging(config)?;
-            FIRST_TIME = false;
-        }
-    }
-    log::info!("Initialization complete!");
     Ok(())
 }
 
 #[no_mangle]
 pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     unsafe {
-        if LIB_STATE.is_some() {
-            log::info!("Called start() with library already created");
-            return Ok(-1);
+        if LIB_STATE.is_none() {
+            LIB_STATE = Some(LibState::init(&config)?);
         }
     }
-
-    log::info!("Starting library");
-
-    if let Err(_e) = init(&config) {
-        return Ok(-2);
-    }
-
-    log::info!("Creating channel");
-
-    let (gui_tx, gui_rx) = std::sync::mpsc::channel();
-    if config.enable_gui {
-        gui::run(gui_rx);
-    }
-
-    let (worker_tx, worker_rx) = std::sync::mpsc::channel();
-
-    unsafe {
-        LIB_STATE = Some(LibState {
-            worker_tx: worker_tx,
-            gui_tx: gui_tx,
-        });
-    }
-
     let mission_name = dcs::get_mission_name(lua);
     log::info!("Loaded in mission {}", mission_name);
-    let worker_cfg = config.clone();
 
-    std::thread::spawn(|| {
-        log::info!("Spawning worker thread");
-        worker::entry(worker_cfg, mission_name, worker_rx);
-    });
+    unsafe {
+        LIB_STATE = Some(
+            LIB_STATE
+                .take()
+                .unwrap()
+                .init_worker(config.clone(), mission_name),
+        );
+    }
+
+    if config.enable_gui {
+        send_gui_message(gui::Message::Start);
+    }
 
     Ok(0)
 }
@@ -157,9 +177,13 @@ pub fn on_frame_end(_lua: &Lua, _: ()) -> LuaResult<()> {
 #[no_mangle]
 pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
     send_worker_message(worker::Message::Stop);
-    unsafe {
-        LIB_STATE = None;
+    if let Some(LibState::WorkerStarted(state)) = unsafe { LIB_STATE.take() } {
+        state.worker_join.join().unwrap();
+        unsafe { LIB_STATE = Some(LibState::GuiStarted(state.gui_tx)) };
+    } else {
+        panic!("Worker wasn't running!")
     }
+    log::logger().flush();
     Ok(())
 }
 
@@ -171,13 +195,4 @@ pub fn dcs_tetrad(lua: &Lua) -> LuaResult<LuaTable> {
     exports.set("on_frame_end", lua.create_function(on_frame_end)?)?;
     exports.set("stop", lua.create_function(stop)?)?;
     Ok(exports)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
 }
