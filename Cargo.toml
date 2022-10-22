@@ -13,7 +13,7 @@ csv = "1.1.6"
 eframe = {git = "https://github.com/emilk/egui", features = ["wgpu"]}
 egui = {git = "https://github.com/emilk/egui"}
 egui-wgpu = {git = "https://github.com/emilk/egui"}
-fern = "0.6.1"
+flexi_logger = "0.24.0"
 log = "0.4.17"
 log-panics = {version = "2", features = ["with-backtrace"]}
 mlua = {version = "0.8", default-features = false, features = ["lua51", "module", "serialize"]}

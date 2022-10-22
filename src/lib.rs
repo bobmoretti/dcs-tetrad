@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 mod config;
+use flexi_logger::{FileSpec, FlexiLoggerError, LogSpecification, Logger, LoggerHandle};
 mod dcs;
 mod gui;
 pub mod worker;
@@ -19,14 +20,44 @@ enum LibState {
     WorkerStarted(FullState),
 }
 
+fn setup_logging(config: &config::Config) -> Result<LoggerHandle, FlexiLoggerError> {
+    use log::LevelFilter;
+    let level = if config.debug {
+        LevelFilter::Debug
+    } else {
+        LevelFilter::Info
+    };
+
+    let logdir = Path::new(config.write_dir.as_str())
+        .join("Logs")
+        .join("Tetrad");
+
+    std::fs::create_dir_all(&logdir).unwrap();
+    let log_name = "dcs_tetrad.log";
+
+    let mut b = LogSpecification::builder();
+    b.default(level)
+        .module("wgpu_core", LevelFilter::Info)
+        .module("naga", LevelFilter::Info);
+
+    let l = Logger::with(b.build())
+        .log_to_file(FileSpec::default().directory(logdir).basename(log_name))
+        .start()?;
+
+    log_panics::init();
+    log::info!("Initialization of logging complete!");
+
+    Ok(l)
+}
+
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
-        log::info!("Starting library");
         if let Err(_e) = setup_logging(&config) {
             return Err(mlua::Error::RuntimeError(
                 "Coulnd't set up logging, very sad.".into(),
             ));
         }
+        log::info!("Starting library");
 
         let (gui_tx, gui_rx) = std::sync::mpsc::channel();
 
@@ -85,48 +116,6 @@ fn send_worker_message(message: worker::Message) {
 fn send_gui_message(message: gui::Message) {
     log::trace!("sending message to gui: {:?}", message);
     get_lib_state().gui_tx.send(message).unwrap();
-}
-
-fn setup_logging(config: &config::Config) -> Result<(), fern::InitError> {
-    use log::LevelFilter;
-    let level = if config.debug {
-        LevelFilter::Debug
-    } else {
-        LevelFilter::Info
-    };
-
-    let logdir = Path::new(config.write_dir.as_str())
-        .join("Logs")
-        .join("Tetrad");
-
-    std::fs::create_dir_all(&logdir).unwrap();
-    let p = logdir.join("dcs_tetrad.log");
-
-    fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{}[{}][{}] {}",
-                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .level(level)
-        .level_for("wgpu_core", LevelFilter::Info)
-        .level_for("naga", LevelFilter::Info)
-        .chain(
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(p)?,
-        )
-        .apply()?;
-
-    log_panics::init();
-    log::info!("Initialization of logging complete!");
-
-    Ok(())
 }
 
 #[no_mangle]
