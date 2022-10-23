@@ -1,3 +1,4 @@
+use fern::colors::{Color, ColoredLevelConfig};
 use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
 use std::io::Write;
@@ -24,6 +25,17 @@ enum LibState {
 }
 
 fn setup_logging(config: &config::Config, console: File) -> Result<(), fern::InitError> {
+    let colors_line = ColoredLevelConfig::new()
+        .error(Color::Red)
+        .warn(Color::Yellow)
+        // we actually don't need to specify the color for debug and info, they are white by default
+        .info(Color::White)
+        .debug(Color::White)
+        // depending on the terminals color scheme, this is the same as the background color
+        .trace(Color::BrightBlack);
+
+    let colors_level = colors_line.clone().info(Color::Green);
+
     use log::LevelFilter;
     let level = if config.debug {
         LevelFilter::Debug
@@ -39,17 +51,21 @@ fn setup_logging(config: &config::Config, console: File) -> Result<(), fern::Ini
     let p = logdir.join("dcs_tetrad.log");
 
     fern::Dispatch::new()
-        .format(|out, message, record| {
+        .format(move |out, message, record| {
             out.finish(format_args!(
-                "{}[{}][{}] {}",
-                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
-                record.target(),
-                record.level(),
-                message
-            ))
+                "{color_line}[{date}][{target}][{level}{color_line}] {message}\x1B[0m",
+                color_line = format_args!(
+                    "\x1B[{}m",
+                    colors_line.get_color(&record.level()).to_fg_str()
+                ),
+                date = chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                target = record.target(),
+                level = colors_level.color(record.level()),
+                message = message,
+            ));
         })
         .level(level)
-        .level_for("wgpu_core", LevelFilter::Info)
+        .level_for("wgpu_core", LevelFilter::Warn)
         .level_for("naga", LevelFilter::Info)
         .chain(
             std::fs::OpenOptions::new()
