@@ -1,10 +1,13 @@
 use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
+use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
+use std::{fs::File, os::windows::io::FromRawHandle};
+use windows::Win32::System::Console;
+
 mod config;
-use flexi_logger::{FileSpec, FlexiLoggerError, LogSpecification, Logger, LoggerHandle};
 mod dcs;
 mod gui;
 pub mod worker;
@@ -20,7 +23,7 @@ enum LibState {
     WorkerStarted(FullState),
 }
 
-fn setup_logging(config: &config::Config) -> Result<LoggerHandle, FlexiLoggerError> {
+fn setup_logging(config: &config::Config, console: File) -> Result<(), fern::InitError> {
     use log::LevelFilter;
     let level = if config.debug {
         LevelFilter::Debug
@@ -33,28 +36,62 @@ fn setup_logging(config: &config::Config) -> Result<LoggerHandle, FlexiLoggerErr
         .join("Tetrad");
 
     std::fs::create_dir_all(&logdir).unwrap();
-    let log_name = "dcs_tetrad.log";
+    let p = logdir.join("dcs_tetrad.log");
 
-    let mut b = LogSpecification::builder();
-    b.default(level)
-        .module("wgpu_core", LevelFilter::Info)
-        .module("naga", LevelFilter::Info);
-
-    let l = Logger::with(b.build())
-        .log_to_file(FileSpec::default().directory(logdir).basename(log_name))
-        .start()?;
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(level)
+        .level_for("wgpu_core", LevelFilter::Info)
+        .level_for("naga", LevelFilter::Info)
+        .chain(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(p)?,
+        )
+        .chain(console)
+        .apply()?;
 
     log_panics::init();
     log::info!("Initialization of logging complete!");
 
-    Ok(l)
+    Ok(())
+}
+
+fn create_console() -> windows::core::Result<File> {
+    unsafe {
+        Console::AllocConsole();
+        let h_stdout = Console::GetStdHandle(Console::STD_OUTPUT_HANDLE)?;
+        Ok(File::from_raw_handle(h_stdout.0 as *mut libc::c_void))
+    }
 }
 
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
-        if let Err(_e) = setup_logging(&config) {
+        let mut console_out = match create_console() {
+            Err(e) => {
+                return Err(mlua::Error::RuntimeError(
+                    format!("Couldn't create console, very sad. Error was {:#?}", e).into(),
+                ));
+            }
+            Ok(f) => f,
+        };
+        writeln!(
+            console_out,
+            "Console creation complete, setting up logging."
+        )
+        .unwrap();
+        if let Err(_e) = setup_logging(&config, console_out) {
             return Err(mlua::Error::RuntimeError(
-                "Coulnd't set up logging, very sad.".into(),
+                "Couldn't set up logging, very sad.".into(),
             ));
         }
         log::info!("Starting library");
@@ -66,6 +103,7 @@ impl LibState {
         if config.enable_gui {
             gui::run(gui_rx);
         }
+
         Ok(state)
     }
 

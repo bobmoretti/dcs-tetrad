@@ -68,7 +68,7 @@ fn do_gui(rx: &Receiver<Message>) {
         native_options,
         Box::new(move |cc| Box::new(Gui::new(cc, rx_forever))),
     );
-    log::info!("CLOSED!!");
+    log::info!("Gui closed");
 }
 
 pub fn run(rx: Receiver<Message>) {
