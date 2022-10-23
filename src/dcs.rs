@@ -39,7 +39,7 @@ pub struct DcsWorldUnit {
 }
 
 pub trait Loggable {
-    fn log_as_csv<W: Write>(self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>);
+    fn log_as_csv<W: Write>(&self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>);
 }
 
 impl<'lua> DcsWorldObject {
@@ -110,7 +110,7 @@ struct FrameObjectRecord<'a> {
 }
 
 impl Loggable for DcsWorldObject {
-    fn log_as_csv<W: Write>(self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
+    fn log_as_csv<W: Write>(&self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
         writer
             .serialize((
                 FrameObjectRecord {
@@ -126,7 +126,7 @@ impl Loggable for DcsWorldObject {
 }
 
 impl Loggable for DcsWorldUnit {
-    fn log_as_csv<W: Write>(self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
+    fn log_as_csv<W: Write>(&self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
         writer
             .serialize((
                 FrameObjectRecord {

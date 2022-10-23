@@ -1,6 +1,6 @@
 use crate::dcs::DcsWorldUnit;
 use egui;
-use std::sync::mpsc::Receiver;
+use std::sync::{mpsc::Receiver, Arc};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
 pub struct Gui {
@@ -12,7 +12,7 @@ pub struct Gui {
 pub enum Message {
     #[default]
     Start,
-    Update(Vec<DcsWorldUnit>),
+    Update(Arc<Vec<DcsWorldUnit>>),
 }
 
 impl Gui {

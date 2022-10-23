@@ -1,16 +1,16 @@
+use crate::config::Config;
 use crate::dcs;
 use crate::dcs::DcsWorldObject;
 use crate::dcs::DcsWorldUnit;
-use crate::config::Config;
 use std::fs::File;
 use std::path::Path;
-use std::sync::mpsc::Receiver;
+use std::sync::{mpsc::Receiver, Arc};
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 pub enum Message {
     NewFrame(f64),
-    BallisticsStateUpdate(Vec<DcsWorldObject>),
-    UnitStateUpdate(Vec<DcsWorldUnit>),
+    BallisticsStateUpdate(Arc<Vec<DcsWorldObject>>),
+    UnitStateUpdate(Arc<Vec<DcsWorldUnit>>),
     Stop,
 }
 
@@ -59,7 +59,7 @@ fn log_dcs_objects<W: std::io::Write, T: dcs::Loggable>(
     frame_count: i32,
     t: f64,
     writer: &mut csv::Writer<W>,
-    objects: Vec<T>,
+    objects: &[T],
 ) {
     for obj in objects.into_iter() {
         obj.log_as_csv(frame_count, t, writer);
@@ -121,13 +121,13 @@ pub fn entry(config: Config, mission_name: String, rx: Receiver<Message>) {
             Message::BallisticsStateUpdate(objects) => {
                 log::trace!("Logging Ballistics message with {} elements", objects.len());
                 if let Some(ref mut writer) = object_writer {
-                    log_dcs_objects(frame_count, most_recent_time, writer, objects);
+                    log_dcs_objects(frame_count, most_recent_time, writer, objects.as_slice());
                 }
             }
             Message::UnitStateUpdate(objects) => {
                 log::trace!("Logging Units message with {} elements", objects.len());
                 if let Some(ref mut writer) = object_writer {
-                    log_dcs_objects(frame_count, most_recent_time, writer, objects)
+                    log_dcs_objects(frame_count, most_recent_time, writer, objects.as_slice())
                 }
             }
             Message::Stop => {

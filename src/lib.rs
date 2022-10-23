@@ -3,7 +3,7 @@ use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
 use std::io::Write;
 use std::path::Path;
-use std::sync::mpsc::Sender;
+use std::sync::{mpsc::Sender, Arc};
 use std::thread::JoinHandle;
 use std::{fs::File, os::windows::io::FromRawHandle};
 use windows::Win32::System::Console;
@@ -215,12 +215,12 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     let t = dcs::get_model_time(lua);
     send_worker_message(worker::Message::NewFrame(t));
 
-    let ballistics = dcs::get_ballistics_objects(lua);
+    let ballistics = Arc::new(dcs::get_ballistics_objects(lua));
     send_worker_message(worker::Message::BallisticsStateUpdate(ballistics));
 
-    let units = dcs::get_unit_objects(lua);
-    send_worker_message(worker::Message::UnitStateUpdate(units.clone()));
-    send_gui_message(gui::Message::Update(units));
+    let units = Arc::new(dcs::get_unit_objects(lua));
+    send_worker_message(worker::Message::UnitStateUpdate(Arc::clone(&units)));
+    send_gui_message(gui::Message::Update(Arc::clone(&units)));
     Ok(())
 }
 
