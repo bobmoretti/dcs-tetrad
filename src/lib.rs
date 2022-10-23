@@ -17,6 +17,7 @@ struct FullState {
     worker_tx: Sender<worker::Message>,
     worker_join: JoinHandle<()>,
     gui_tx: Sender<gui::Message>,
+    gui_context: Option<egui::Context>,
 }
 
 enum LibState {
@@ -113,9 +114,7 @@ impl LibState {
         log::info!("Starting library");
 
         let (gui_tx, gui_rx) = std::sync::mpsc::channel();
-
         let state = LibState::GuiStarted(gui_tx);
-
         if config.enable_gui {
             gui::run(gui_rx);
         }
@@ -123,18 +122,27 @@ impl LibState {
         Ok(state)
     }
 
-    fn init_worker(self, config: config::Config, mission_name: String) -> Self {
+    fn init_session(self, config: config::Config, mission_name: String) -> Self {
         let (worker_tx, worker_rx) = std::sync::mpsc::channel();
+        let enable_gui = config.enable_gui;
+
         let worker_join = std::thread::spawn(|| {
             log::info!("Spawning worker thread");
             worker::entry(config, mission_name, worker_rx);
         });
+
+        let gui_context = if enable_gui {
+            Some(egui::Context::default())
+        } else {
+            None
+        };
 
         match self {
             Self::GuiStarted(gui_tx) => Self::WorkerStarted(FullState {
                 worker_tx,
                 worker_join,
                 gui_tx,
+                gui_context,
             }),
             Self::WorkerStarted { .. } => panic!("Worker already started"),
         }
@@ -170,6 +178,9 @@ fn send_worker_message(message: worker::Message) {
 fn send_gui_message(message: gui::Message) {
     log::trace!("sending message to gui: {:?}", message);
     get_lib_state().gui_tx.send(message).unwrap();
+    if let Some(ctx) = &get_lib_state().gui_context {
+        ctx.request_repaint();
+    }
 }
 
 #[no_mangle]
@@ -187,7 +198,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
             LIB_STATE
                 .take()
                 .unwrap()
-                .init_worker(config.clone(), mission_name),
+                .init_session(config.clone(), mission_name),
         );
     }
 
@@ -208,7 +219,8 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     send_worker_message(worker::Message::BallisticsStateUpdate(ballistics));
 
     let units = dcs::get_unit_objects(lua);
-    send_worker_message(worker::Message::UnitStateUpdate(units));
+    send_worker_message(worker::Message::UnitStateUpdate(units.clone()));
+    send_gui_message(gui::Message::Update(units));
     Ok(())
 }
 

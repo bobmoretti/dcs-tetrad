@@ -10,10 +10,10 @@ crate-type = ["cdylib"]
 [dependencies]
 chrono = "0.4.22"
 csv = "1.1.6"
-eframe = {git = "https://github.com/emilk/egui", features = ["wgpu"]}
-egui = {git = "https://github.com/emilk/egui"}
-egui-wgpu = {git = "https://github.com/emilk/egui"}
-fern = { version = "0.6.1", features = ["colored"] }
+eframe = {git = "https://github.com/bobmoretti/egui", branch = "user/bobmoretti/default-context", features = ["wgpu"]}
+egui = {git = "https://github.com/bobmoretti/egui", branch = "user/bobmoretti/default-context"}
+egui-wgpu = {git = "https://github.com/bobmoretti/egui", branch = "user/bobmoretti/default-context"}
+fern = {version = "0.6.1", features = ["colored"]}
 libc = "0.2.135"
 log = "0.4.17"
 log-panics = {version = "2", features = ["with-backtrace"]}

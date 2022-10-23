@@ -1,39 +1,38 @@
+use crate::dcs::DcsWorldUnit;
 use egui;
 use std::sync::mpsc::Receiver;
+use winit::platform::windows::EventLoopBuilderExtWindows;
 
 pub struct Gui {
     rx: &'static Receiver<Message>,
+    num_objects: i32,
 }
 
-enum State {
-    Stopped,
-    Started,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum Message {
+    #[default]
     Start,
-    Update,
+    Update(Vec<DcsWorldUnit>),
 }
-
-use winit::platform::windows::EventLoopBuilderExtWindows;
 
 impl Gui {
-    pub fn new(_cc: &eframe::CreationContext<'_>, rx: &'static Receiver<Message>) -> Self {
-        Self { rx }
+    pub fn new(rx: &'static Receiver<Message>) -> Self {
+        Self { rx, num_objects: 0 }
     }
 
-    fn handle_messages(&self) {
+    fn handle_messages(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             self.handle_message(msg);
         }
     }
 
-    fn handle_message(&self, _msg: Message) {}
-
-    fn handle_message_blocking(&self) {
-        let msg = self.rx.recv().unwrap();
-        self.handle_message(msg);
+    fn handle_message(&mut self, msg: Message) {
+        match msg {
+            Message::Start => {}
+            Message::Update(units) => {
+                self.num_objects = units.len() as i32;
+            }
+        };
     }
 }
 
@@ -45,8 +44,8 @@ impl eframe::App for Gui {
             ui.heading("DCS state monitor");
 
             egui::Grid::new("main_grid").show(ui, |ui| {
-                ui.label("DCS connection:");
-                ui.label("connection_string");
+                ui.label("Num objects: ");
+                ui.label(format!("{}", self.num_objects));
                 ui.end_row();
             });
         });
@@ -60,22 +59,28 @@ fn do_gui(rx: &Receiver<Message>) {
         builder.with_any_thread(true);
     }));
     native_options.renderer = eframe::Renderer::Wgpu;
+    native_options.context = Some(egui::Context::default());
     log::info!("Spawning worker thread");
     let rx_forever: &'static Receiver<Message> = unsafe { std::mem::transmute(rx) };
+
+    let gui = Gui::new(rx_forever);
 
     eframe::run_native(
         "DCS Tetrad",
         native_options,
-        Box::new(move |cc| Box::new(Gui::new(cc, rx_forever))),
+        Box::new(move |_cc| Box::new(gui)),
     );
     log::info!("Gui closed");
 }
 
 pub fn run(rx: Receiver<Message>) {
-    std::thread::spawn(move || loop {
-        let msg = rx.recv().unwrap();
-        if let Message::Start = msg {
-            do_gui(&rx);
+    let gui_thread_entry = {
+        move || loop {
+            let msg = rx.recv().unwrap();
+            if let Message::Start = msg {
+                do_gui(&rx);
+            }
         }
-    });
+    };
+    std::thread::spawn(gui_thread_entry);
 }

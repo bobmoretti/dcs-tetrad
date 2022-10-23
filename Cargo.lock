@@ -633,7 +633,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "bytemuck",
  "egui",
@@ -656,7 +656,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "ahash 0.8.0",
  "epaint",
@@ -667,7 +667,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "bytemuck",
  "egui",
@@ -681,7 +681,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "arboard",
  "egui",
@@ -695,7 +695,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "bytemuck",
  "egui",
@@ -709,7 +709,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "bytemuck",
 ]
@@ -717,7 +717,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.19.0"
-source = "git+https://github.com/emilk/egui#7b8c17042c56726facd01fbf2735a67341a34470"
+source = "git+https://github.com/bobmoretti/egui?branch=user/bobmoretti/default-context#85f26d74a995df158d8a8e37b340d582f95f142b"
 dependencies = [
  "ab_glyph",
  "ahash 0.8.0",
