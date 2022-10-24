@@ -176,7 +176,7 @@ fn send_worker_message(message: worker::Message) {
 }
 
 fn send_gui_message(message: gui::Message) {
-    log::trace!("sending message to gui: {:?}", message);
+    log::trace!("sending message to gui");
     get_lib_state().gui_tx.send(message).unwrap();
     if let Some(ctx) = &get_lib_state().gui_context {
         ctx.request_repaint();
@@ -203,7 +203,9 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     }
 
     if config.enable_gui {
-        send_gui_message(gui::Message::Start);
+        let ctx = egui::Context::default();
+        send_gui_message(gui::Message::Start(ctx.clone()));
+        get_lib_state().gui_context = Some(ctx);
     }
 
     Ok(0)
@@ -211,16 +213,26 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
 
 #[no_mangle]
 pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
+    if dcs::is_paused(lua) {
+        return Ok(());
+    }
+
     log::trace!("Frame begun!");
     let t = dcs::get_model_time(lua);
     send_worker_message(worker::Message::NewFrame(t));
 
     let ballistics = Arc::new(dcs::get_ballistics_objects(lua));
-    send_worker_message(worker::Message::BallisticsStateUpdate(ballistics));
+    send_worker_message(worker::Message::BallisticsStateUpdate(Arc::clone(
+        &ballistics,
+    )));
 
     let units = Arc::new(dcs::get_unit_objects(lua));
     send_worker_message(worker::Message::UnitStateUpdate(Arc::clone(&units)));
-    send_gui_message(gui::Message::Update(Arc::clone(&units)));
+    send_gui_message(gui::Message::Update {
+        units: Arc::clone(&units),
+        ballistics: Arc::clone(&ballistics),
+        game_time: t,
+    });
     Ok(())
 }
 

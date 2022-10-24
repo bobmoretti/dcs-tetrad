@@ -147,6 +147,12 @@ pub fn get_model_time(lua: &Lua) -> f64 {
     get_model_time.call::<_, f64>(()).unwrap()
 }
 
+pub fn is_paused(lua: &Lua) -> bool {
+    let dcs: LuaTable = lua.globals().get("DCS").unwrap();
+    let get_pause: LuaFunction = dcs.get("getPause").unwrap();
+    get_pause.call::<_, bool>(()).unwrap()
+}
+
 pub fn get_lo_get_world_objects(lua: &Lua) -> LuaFunction {
     let export: LuaTable = lua.globals().get("Export").unwrap();
     export.get("LoGetWorldObjects").unwrap()
