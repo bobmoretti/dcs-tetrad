@@ -170,7 +170,7 @@ fn do_gui(rx: &Receiver<Message>, egui_context: egui::Context) {
         x: 1880.0,
         y: 256.0 * 4.0,
     });
-    log::info!("Spawning worker thread");
+    log::info!("Spawning GUI thread");
     let rx_forever: &'static Receiver<Message> = unsafe { std::mem::transmute(rx) };
 
     let gui = Gui::new(rx_forever);
