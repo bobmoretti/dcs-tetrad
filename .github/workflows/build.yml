@@ -1,0 +1,48 @@
+name: Build tetrad
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Rustup
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - run: |
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Set up cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo build
+        run: |
+          cargo build --release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: DLL
+          path: |
+            target/x86_64-pc-windows-msvc/release/dcs_tetrad.dll
+            target/x86_64-pc-windows-msvc/release/dcs_tetrad.pdb
+            lua/**
+
+      - name: Zip for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir tetrad
+          cp target\x86_64-pc-windows-msvc\release\dcs_tetrad.dll tetrad\
+          cp target\x86_64-pc-windows-msvc\release\dcs_tetrad.pdb tetrad\
+          Compress-Archive -Path lua,tetrad -DestinationPath dcs_tetrad.zip
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: dcs_tetrad.zip
