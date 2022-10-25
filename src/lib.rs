@@ -112,6 +112,7 @@ impl LibState {
             ));
         }
         log::info!("Starting library");
+        log::info!("Loading DCS tetrad version {}", env!("CARGO_PKG_VERSION"));
 
         let (gui_tx, gui_rx) = std::sync::mpsc::channel();
         let state = LibState::GuiStarted(gui_tx);
