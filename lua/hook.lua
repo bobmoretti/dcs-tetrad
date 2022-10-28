@@ -56,7 +56,7 @@ do
     function tetradCallbacks.onSimulationStop()
         TETRAD.lib.stop()
         TETRAD.lib = nil
-        TETRAD = nil
+        TETRAD = {}
         package.loaded['dcs_tetrad'] = nil
     end
 

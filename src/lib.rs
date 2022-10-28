@@ -3,7 +3,10 @@ use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
 use std::io::Write;
 use std::path::Path;
-use std::sync::{mpsc::Sender, Arc};
+use std::sync::{
+    mpsc::{Receiver, Sender},
+    Arc,
+};
 use std::thread::JoinHandle;
 use std::{fs::File, os::windows::io::FromRawHandle};
 use windows::Win32::System::Console;
@@ -18,10 +21,17 @@ struct FullState {
     worker_join: JoinHandle<()>,
     gui_tx: Sender<gui::Message>,
     gui_context: Option<egui::Context>,
+    gui_handle: Option<gui::Handle>,
+    rx_from_gui: Receiver<gui::ClientMessage>,
 }
 
 enum LibState {
-    GuiStarted(Sender<gui::Message>),
+    GuiStarted(
+        Sender<gui::Message>,
+        Receiver<gui::ClientMessage>,
+        Option<gui::Handle>,
+        Option<egui::Context>,
+    ),
     WorkerStarted(FullState),
 }
 
@@ -91,6 +101,11 @@ fn create_console() -> windows::core::Result<File> {
     }
 }
 
+fn wait_for_gui_started(rx_from_gui: &Receiver<gui::ClientMessage>) -> gui::Handle {
+    let gui::ClientMessage::ThreadStarted(h) = rx_from_gui.recv().unwrap();
+    h
+}
+
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
         let mut console_out = match create_console() {
@@ -115,35 +130,43 @@ impl LibState {
         log::info!("Loading DCS tetrad version {}", env!("CARGO_PKG_VERSION"));
 
         let (gui_tx, gui_rx) = std::sync::mpsc::channel();
-        let state = LibState::GuiStarted(gui_tx);
+        let (tx_to_main, rx_from_gui) = std::sync::mpsc::channel();
         if config.enable_gui {
-            gui::run(gui_rx);
+            log::debug!("Calling gui::run");
+            gui::run(gui_rx, tx_to_main);
         }
+
+        let handle = if config.enable_gui {
+            log::debug!("waiting for GUI to start");
+            Some(wait_for_gui_started(&rx_from_gui))
+        } else {
+            None
+        };
+
+        let state =
+            LibState::GuiStarted(gui_tx, rx_from_gui, handle, Some(egui::Context::default()));
 
         Ok(state)
     }
 
     fn init_session(self, config: config::Config, mission_name: String) -> Self {
         let (worker_tx, worker_rx) = std::sync::mpsc::channel();
-        let enable_gui = config.enable_gui;
+        log::info!("Spawning worker thread");
 
         let worker_join = std::thread::spawn(|| {
-            log::info!("Spawning worker thread");
+            log::info!("Worker thread");
             worker::entry(config, mission_name, worker_rx);
         });
-
-        let gui_context = if enable_gui {
-            Some(egui::Context::default())
-        } else {
-            None
-        };
+        log::info!("Setting GUI context");
 
         match self {
-            Self::GuiStarted(gui_tx) => Self::WorkerStarted(FullState {
+            Self::GuiStarted(gui_tx, rx, handle, gui_context) => Self::WorkerStarted(FullState {
                 worker_tx,
                 worker_join,
                 gui_tx,
                 gui_context,
+                gui_handle: handle,
+                rx_from_gui: rx,
             }),
             Self::WorkerStarted { .. } => panic!("Worker already started"),
         }
@@ -204,9 +227,23 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     }
 
     if config.enable_gui {
-        let ctx = egui::Context::default();
-        send_gui_message(gui::Message::Start(ctx.clone()));
-        get_lib_state().gui_context = Some(ctx);
+        if get_lib_state()
+            .gui_handle
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .is_none()
+        {
+            let ctx = get_lib_state().gui_context.clone();
+            log::debug!("Starting GUI");
+            send_gui_message(gui::Message::Start(ctx.unwrap()));
+        } else {
+            log::debug!("GUI already running, not starting a new GUI");
+            send_gui_message(gui::Message::Start(
+                get_lib_state().gui_context.clone().unwrap(),
+            ));
+        }
     }
 
     Ok(0)
@@ -247,7 +284,14 @@ pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
     send_worker_message(worker::Message::Stop);
     if let Some(LibState::WorkerStarted(state)) = unsafe { LIB_STATE.take() } {
         state.worker_join.join().unwrap();
-        unsafe { LIB_STATE = Some(LibState::GuiStarted(state.gui_tx)) };
+        unsafe {
+            LIB_STATE = Some(LibState::GuiStarted(
+                state.gui_tx,
+                state.rx_from_gui,
+                state.gui_handle,
+                state.gui_context,
+            ))
+        };
     } else {
         panic!("Worker wasn't running!")
     }

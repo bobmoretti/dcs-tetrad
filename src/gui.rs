@@ -2,10 +2,18 @@ use crate::dcs::{DcsWorldObject, DcsWorldUnit};
 use bounded_vec_deque::BoundedVecDeque;
 use egui::plot::{Corner, Legend, Line, Plot, PlotPoints};
 use egui::{self, Vec2};
-use std::sync::{mpsc::Receiver, Arc};
+use std::sync::{
+    mpsc::{Receiver, Sender},
+    Arc, RwLock,
+};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
-pub struct Gui {
+#[derive(Default)]
+pub struct GuiInterface {}
+
+pub type Handle = Arc<RwLock<Option<GuiInterface>>>;
+
+struct Gui {
     rx: &'static Receiver<Message>,
     num_units: BoundedVecDeque<i32>,
     num_ballistics: BoundedVecDeque<i32>,
@@ -21,6 +29,10 @@ pub enum Message {
         ballistics: Arc<Vec<DcsWorldObject>>,
         game_time: f64,
     },
+}
+
+pub enum ClientMessage {
+    ThreadStarted(Handle),
 }
 
 impl Gui {
@@ -41,7 +53,11 @@ impl Gui {
 
     fn handle_message(&mut self, msg: Message) {
         match msg {
-            Message::Start(_context) => {}
+            Message::Start(_context) => {
+                self.num_ballistics.clear();
+                self.num_units.clear();
+                self.frame_times.clear();
+            }
             Message::Update {
                 units,
                 ballistics,
@@ -180,15 +196,28 @@ fn do_gui(rx: &Receiver<Message>, egui_context: egui::Context) {
         native_options,
         Box::new(move |_cc| Box::new(gui)),
     );
+
     log::info!("Gui closed");
 }
 
-pub fn run(rx: Receiver<Message>) {
+pub fn run(rx: Receiver<Message>, tx_to_main: Sender<ClientMessage>) {
+    let interface: Option<GuiInterface> = None;
+    let handle = Handle::new(RwLock::new(interface));
+    let handle_for_gui_thread = handle.clone();
+
     let gui_thread_entry = {
         move || loop {
+            log::debug!("Waiting for GUI start message");
+            tx_to_main
+                .send(ClientMessage::ThreadStarted(handle.clone()))
+                .unwrap();
+
             let msg = rx.recv().unwrap();
             if let Message::Start(ctx) = msg {
+                log::debug!("Got a GUI start message");
+                *handle_for_gui_thread.write().unwrap() = Some(GuiInterface {});
                 do_gui(&rx, ctx);
+                *handle_for_gui_thread.write().unwrap() = None;
             }
         }
     };
