@@ -3,15 +3,17 @@ use bounded_vec_deque::BoundedVecDeque;
 use egui::plot::{Corner, Legend, Line, Plot, PlotPoints};
 use egui::{self, Vec2};
 use std::sync::{
+    atomic::AtomicBool,
     mpsc::{Receiver, Sender},
-    Arc, RwLock,
+    Arc,
 };
+
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
 #[derive(Default)]
 pub struct GuiInterface {}
 
-pub type Handle = Arc<RwLock<Option<GuiInterface>>>;
+pub type ArcFlag = Arc<AtomicBool>;
 
 struct Gui {
     rx: &'static Receiver<Message>,
@@ -32,7 +34,7 @@ pub enum Message {
 }
 
 pub enum ClientMessage {
-    ThreadStarted(Handle),
+    ThreadStarted(ArcFlag),
 }
 
 impl Gui {
@@ -201,23 +203,21 @@ fn do_gui(rx: &Receiver<Message>, egui_context: egui::Context) {
 }
 
 pub fn run(rx: Receiver<Message>, tx_to_main: Sender<ClientMessage>) {
-    let interface: Option<GuiInterface> = None;
-    let handle = Handle::new(RwLock::new(interface));
-    let handle_for_gui_thread = handle.clone();
+    let is_gui_shown = ArcFlag::new(AtomicBool::new(false));
 
     let gui_thread_entry = {
         move || loop {
             log::debug!("Waiting for GUI start message");
             tx_to_main
-                .send(ClientMessage::ThreadStarted(handle.clone()))
+                .send(ClientMessage::ThreadStarted(is_gui_shown.clone()))
                 .unwrap();
 
             let msg = rx.recv().unwrap();
             if let Message::Start(ctx) = msg {
                 log::debug!("Got a GUI start message");
-                *handle_for_gui_thread.write().unwrap() = Some(GuiInterface {});
+                is_gui_shown.store(true, std::sync::atomic::Ordering::SeqCst);
                 do_gui(&rx, ctx);
-                *handle_for_gui_thread.write().unwrap() = None;
+                is_gui_shown.store(false, std::sync::atomic::Ordering::SeqCst);
             }
         }
     };

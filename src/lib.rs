@@ -21,7 +21,7 @@ struct FullState {
     worker_join: JoinHandle<()>,
     gui_tx: Sender<gui::Message>,
     gui_context: Option<egui::Context>,
-    gui_handle: Option<gui::Handle>,
+    is_gui_shown: Option<gui::ArcFlag>,
     rx_from_gui: Receiver<gui::ClientMessage>,
 }
 
@@ -29,7 +29,7 @@ enum LibState {
     GuiStarted(
         Sender<gui::Message>,
         Receiver<gui::ClientMessage>,
-        Option<gui::Handle>,
+        Option<gui::ArcFlag>,
         Option<egui::Context>,
     ),
     WorkerStarted(FullState),
@@ -101,7 +101,7 @@ fn create_console() -> windows::core::Result<File> {
     }
 }
 
-fn wait_for_gui_started(rx_from_gui: &Receiver<gui::ClientMessage>) -> gui::Handle {
+fn wait_for_gui_started(rx_from_gui: &Receiver<gui::ClientMessage>) -> gui::ArcFlag {
     let gui::ClientMessage::ThreadStarted(h) = rx_from_gui.recv().unwrap();
     h
 }
@@ -165,7 +165,7 @@ impl LibState {
                 worker_join,
                 gui_tx,
                 gui_context,
-                gui_handle: handle,
+                is_gui_shown: handle,
                 rx_from_gui: rx,
             }),
             Self::WorkerStarted { .. } => panic!("Worker already started"),
@@ -228,12 +228,10 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
 
     if config.enable_gui {
         if get_lib_state()
-            .gui_handle
+            .is_gui_shown
             .as_ref()
             .unwrap()
-            .read()
-            .unwrap()
-            .is_none()
+            .load(std::sync::atomic::Ordering::SeqCst)
         {
             let ctx = get_lib_state().gui_context.clone();
             log::debug!("Starting GUI");
@@ -288,7 +286,7 @@ pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
             LIB_STATE = Some(LibState::GuiStarted(
                 state.gui_tx,
                 state.rx_from_gui,
-                state.gui_handle,
+                state.is_gui_shown,
                 state.gui_context,
             ))
         };
