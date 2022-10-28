@@ -76,12 +76,18 @@ fn finish<W: std::io::Write>(obj: &mut Option<csv::Writer<W>>) {
     }
 }
 
-fn log_frame(writer: &mut csv::Writer<zstd::Encoder<'_, File>>, t1: f64, t0: f64, n: i32) {
-    if t0 != t1 {
-        writer.write_field((n - 1).to_string()).unwrap();
-        writer.write_field((t1 - t0).to_string()).unwrap();
-        writer.write_record(None::<&[u8]>).unwrap();
-    }
+fn log_frame(
+    writer: &mut csv::Writer<zstd::Encoder<'_, File>>,
+    game_time: f64,
+    n: i32,
+    num_units: i32,
+    num_ballistics: i32,
+) {
+    writer.write_field((n - 1).to_string()).unwrap();
+    writer.write_field(format!("{:.8}", game_time)).unwrap();
+    writer.write_field(num_units.to_string()).unwrap();
+    writer.write_field(num_ballistics.to_string()).unwrap();
+    writer.write_record(None::<&[u8]>).unwrap();
 }
 
 type OutputWriter = csv::Writer<ZstdEncoder<'static, File>>;
@@ -105,12 +111,13 @@ impl Logger {
         }
     }
 
-    fn log_frame(&mut self, t: f64) {
+    fn log_frame(&mut self, t: f64, units: &[DcsWorldUnit], ballistics: &[DcsWorldObject]) {
         log_frame(
             self.frame_writer.as_mut().unwrap(),
             t,
-            self.prev_game_time,
             self.frame_count,
+            units.len() as i32,
+            ballistics.len() as i32,
         );
     }
 
@@ -139,7 +146,7 @@ impl Logger {
         self.prev_game_time = self.most_recent_game_time;
         self.most_recent_game_time = game_time;
         if self.frame_writer.is_some() {
-            self.log_frame(game_time);
+            self.log_frame(game_time, units.as_slice(), &ballistics.as_slice());
         }
         if self.object_writer.is_some() {
             self.log_objects(units.as_slice(), ballistics.as_slice());
