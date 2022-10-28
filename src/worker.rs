@@ -8,23 +8,27 @@ use std::sync::{mpsc::Receiver, Arc};
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 pub enum Message {
-    NewFrame(f64),
-    BallisticsStateUpdate(Arc<Vec<DcsWorldObject>>),
-    UnitStateUpdate(Arc<Vec<DcsWorldUnit>>),
+    Update {
+        units: Arc<Vec<DcsWorldUnit>>,
+        ballistics: Arc<Vec<DcsWorldObject>>,
+        game_time: f64,
+    },
     Stop,
 }
 
 impl std::fmt::Debug for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NewFrame(arg0) => f.debug_tuple("NewFrame").field(arg0).finish(),
-            Self::BallisticsStateUpdate(objs) => f.write_fmt(format_args!(
-                "BallisticsStateUpdate with {} objects",
-                objs.len()
+            Self::Update {
+                units,
+                ballistics,
+                game_time,
+            } => f.write_fmt(format_args!(
+                "Update at t={} with {} units and {} ballistics objects",
+                game_time,
+                units.len(),
+                ballistics.len()
             )),
-            Self::UnitStateUpdate(units) => {
-                f.write_fmt(format_args!("UnitStateUpdate with {} objects", units.len()))
-            }
             Self::Stop => write!(f, "Stop"),
         }
     }
@@ -80,64 +84,121 @@ fn log_frame(writer: &mut csv::Writer<zstd::Encoder<'_, File>>, t1: f64, t0: f64
     }
 }
 
+type OutputWriter = csv::Writer<ZstdEncoder<'static, File>>;
+
+struct Logger {
+    prev_game_time: f64,
+    most_recent_game_time: f64,
+    frame_count: i32,
+    frame_writer: Option<OutputWriter>,
+    object_writer: Option<OutputWriter>,
+}
+
+impl Logger {
+    fn new(frame_writer: Option<OutputWriter>, object_writer: Option<OutputWriter>) -> Self {
+        Self {
+            prev_game_time: 0.0,
+            most_recent_game_time: 0.0,
+            frame_count: 0,
+            frame_writer,
+            object_writer,
+        }
+    }
+
+    fn log_frame(&mut self, t: f64) {
+        log_frame(
+            self.frame_writer.as_mut().unwrap(),
+            t,
+            self.prev_game_time,
+            self.frame_count,
+        );
+    }
+
+    fn log_objects(&mut self, units: &[DcsWorldUnit], ballistics: &[DcsWorldObject]) {
+        log::trace!("Logging Units message with {} elements", units.len());
+        let n = self.frame_count;
+        let t = self.most_recent_game_time;
+        log_dcs_objects(n, t, self.object_writer.as_mut().unwrap(), units);
+
+        log::trace!(
+            "Logging Ballistics message with {} elements",
+            ballistics.len()
+        );
+        log_dcs_objects(n, t, self.object_writer.as_mut().unwrap(), ballistics);
+    }
+
+    fn handle_update(
+        &mut self,
+        units: &Vec<DcsWorldUnit>,
+        ballistics: &Vec<DcsWorldObject>,
+        game_time: f64,
+    ) {
+        let n = self.frame_count;
+        log::trace!("New frame message, n = {}, t = {}", n, game_time);
+
+        self.prev_game_time = self.most_recent_game_time;
+        self.most_recent_game_time = game_time;
+        if self.frame_writer.is_some() {
+            self.log_frame(game_time);
+        }
+        if self.object_writer.is_some() {
+            self.log_objects(units.as_slice(), ballistics.as_slice());
+        }
+    }
+
+    fn handle_message(&mut self, msg: Message) -> bool {
+        match msg {
+            Message::Update {
+                units,
+                ballistics,
+                game_time,
+            } => {
+                self.handle_update(&units, &ballistics, game_time);
+            }
+            Message::Stop => {
+                log::debug!("Stopping!");
+                return true;
+            }
+        }
+        false
+    }
+
+    fn finish(&mut self) {
+        finish(&mut self.object_writer);
+        finish(&mut self.frame_writer);
+    }
+}
+
 pub fn entry(config: Config, mission_name: String, rx: Receiver<Message>) {
-    let mut prev_frame_time: f64;
-    let mut most_recent_time: f64 = 0.0;
-    let mut frame_count: i32 = 0;
     let log_dir = Path::new(config.write_dir.as_str())
         .join("Logs")
         .join("Tetrad");
-    log::debug!("Starting with config {:?}", config);
 
-    let mut object_writer = if config.enable_object_log {
+    let frame_writer = if config.enable_framerate_log {
+        let writer = create_csv_file(&mission_name, &log_dir.join("frames"));
+        Some(writer)
+    } else {
+        None
+    };
+
+    let object_writer = if config.enable_object_log {
         let writer = create_csv_file(&mission_name, &log_dir.join("objects"));
         Some(writer)
     } else {
         None
     };
 
-    let mut frame_writer = if config.enable_framerate_log {
-        let writer = create_csv_file(&mission_name, &log_dir.join("frames"));
-        Some(writer)
-    } else {
-        None
-    };
-    // fuck the static analyzer... ugh
-    // let logs = [&object_writer, &frame_writer];
+    let mut logger = Logger::new(frame_writer, object_writer);
+    log::debug!("Starting with config {:?}", config);
 
     loop {
         log::trace!("Waiting for message");
         let msg = rx.recv().expect("Should be able to receive a message");
-        match msg {
-            Message::NewFrame(t) => {
-                frame_count += 1;
-                log::trace!("New frame message, n = {}, t = {}", frame_count, t);
-                prev_frame_time = most_recent_time;
-                most_recent_time = t;
-                if let Some(ref mut w) = frame_writer {
-                    log_frame(w, t, prev_frame_time, frame_count);
-                }
-            }
-            Message::BallisticsStateUpdate(objects) => {
-                log::trace!("Logging Ballistics message with {} elements", objects.len());
-                if let Some(ref mut writer) = object_writer {
-                    log_dcs_objects(frame_count, most_recent_time, writer, objects.as_slice());
-                }
-            }
-            Message::UnitStateUpdate(objects) => {
-                log::trace!("Logging Units message with {} elements", objects.len());
-                if let Some(ref mut writer) = object_writer {
-                    log_dcs_objects(frame_count, most_recent_time, writer, objects.as_slice())
-                }
-            }
-            Message::Stop => {
-                log::debug!("Stopping!");
-                break;
-            }
+        let done = logger.handle_message(msg);
+        if done {
+            break;
         }
     }
     log::debug!("finishing csv files!");
-
-    finish(&mut object_writer);
-    finish(&mut frame_writer);
+    logger.finish();
 }

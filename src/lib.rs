@@ -250,25 +250,27 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
 #[no_mangle]
 pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     if dcs::is_paused(lua) {
+        log::trace!("DCS is paused");
         return Ok(());
     }
+    log::trace!("Frame begun");
 
-    log::trace!("Frame begun!");
     let t = dcs::get_model_time(lua);
-    send_worker_message(worker::Message::NewFrame(t));
-
     let ballistics = Arc::new(dcs::get_ballistics_objects(lua));
-    send_worker_message(worker::Message::BallisticsStateUpdate(Arc::clone(
-        &ballistics,
-    )));
-
     let units = Arc::new(dcs::get_unit_objects(lua));
-    send_worker_message(worker::Message::UnitStateUpdate(Arc::clone(&units)));
-    send_gui_message(gui::Message::Update {
-        units: Arc::clone(&units),
-        ballistics: Arc::clone(&ballistics),
+    let worker_msg = worker::Message::Update {
+        units: units.clone(),
+        ballistics: ballistics.clone(),
         game_time: t,
-    });
+    };
+    let gui_msg = gui::Message::Update {
+        units: units.clone(),
+        ballistics: ballistics.clone(),
+        game_time: t,
+    };
+
+    send_worker_message(worker_msg);
+    send_gui_message(gui_msg);
     Ok(())
 }
 
