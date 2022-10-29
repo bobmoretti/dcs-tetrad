@@ -2,7 +2,7 @@
 edition = "2021"
 name = "dcs-tetrad"
 rust-version = "1.64"
-version = "0.3.0"
+version = "0.4.1"
 
 [lib]
 crate-type = ["cdylib"]
