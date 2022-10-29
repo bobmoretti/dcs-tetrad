@@ -12,6 +12,7 @@ pub enum Message {
         units: Arc<Vec<DcsWorldUnit>>,
         ballistics: Arc<Vec<DcsWorldObject>>,
         game_time: f64,
+        real_time: f64,
     },
     Stop,
 }
@@ -23,6 +24,7 @@ impl std::fmt::Debug for Message {
                 units,
                 ballistics,
                 game_time,
+                real_time: _,
             } => f.write_fmt(format_args!(
                 "Update at t={} with {} units and {} ballistics objects",
                 game_time,
@@ -62,11 +64,12 @@ fn create_csv_file(mission_name: &str, dir_name: &Path) -> csv::Writer<ZstdEncod
 fn log_dcs_objects<W: std::io::Write, T: dcs::Loggable>(
     frame_count: i32,
     t: f64,
+    real_time: f64,
     writer: &mut csv::Writer<W>,
     objects: &[T],
 ) {
     for obj in objects.into_iter() {
-        obj.log_as_csv(frame_count, t, writer);
+        obj.log_as_csv(frame_count, t, real_time, writer);
     }
 }
 
@@ -79,12 +82,14 @@ fn finish<W: std::io::Write>(obj: &mut Option<csv::Writer<W>>) {
 fn log_frame(
     writer: &mut csv::Writer<zstd::Encoder<'_, File>>,
     game_time: f64,
+    real_time: f64,
     n: i32,
     num_units: i32,
     num_ballistics: i32,
 ) {
     writer.write_field((n - 1).to_string()).unwrap();
     writer.write_field(format!("{:.8}", game_time)).unwrap();
+    writer.write_field(format!("{:.8}", real_time)).unwrap();
     writer.write_field(num_units.to_string()).unwrap();
     writer.write_field(num_ballistics.to_string()).unwrap();
     writer.write_record(None::<&[u8]>).unwrap();
@@ -95,6 +100,7 @@ type OutputWriter = csv::Writer<ZstdEncoder<'static, File>>;
 struct Logger {
     prev_game_time: f64,
     most_recent_game_time: f64,
+    current_real_time: f64,
     frame_count: i32,
     frame_writer: Option<OutputWriter>,
     object_writer: Option<OutputWriter>,
@@ -104,6 +110,7 @@ impl Logger {
     fn new(frame_writer: Option<OutputWriter>, object_writer: Option<OutputWriter>) -> Self {
         Self {
             prev_game_time: 0.0,
+            current_real_time: 0.0,
             most_recent_game_time: 0.0,
             frame_count: 0,
             frame_writer,
@@ -115,6 +122,7 @@ impl Logger {
         log_frame(
             self.frame_writer.as_mut().unwrap(),
             t,
+            self.current_real_time,
             self.frame_count,
             units.len() as i32,
             ballistics.len() as i32,
@@ -125,13 +133,25 @@ impl Logger {
         log::trace!("Logging Units message with {} elements", units.len());
         let n = self.frame_count;
         let t = self.most_recent_game_time;
-        log_dcs_objects(n, t, self.object_writer.as_mut().unwrap(), units);
+        log_dcs_objects(
+            n,
+            t,
+            self.current_real_time,
+            self.object_writer.as_mut().unwrap(),
+            units,
+        );
 
         log::trace!(
             "Logging Ballistics message with {} elements",
             ballistics.len()
         );
-        log_dcs_objects(n, t, self.object_writer.as_mut().unwrap(), ballistics);
+        log_dcs_objects(
+            n,
+            t,
+            self.current_real_time,
+            self.object_writer.as_mut().unwrap(),
+            ballistics,
+        );
     }
 
     fn handle_update(
@@ -139,12 +159,14 @@ impl Logger {
         units: &Vec<DcsWorldUnit>,
         ballistics: &Vec<DcsWorldObject>,
         game_time: f64,
+        real_time: f64,
     ) {
         let n = self.frame_count;
         log::trace!("New frame message, n = {}, t = {}", n, game_time);
 
         self.prev_game_time = self.most_recent_game_time;
         self.most_recent_game_time = game_time;
+        self.current_real_time = real_time;
         if self.frame_writer.is_some() {
             self.log_frame(game_time, units.as_slice(), &ballistics.as_slice());
         }
@@ -159,8 +181,9 @@ impl Logger {
                 units,
                 ballistics,
                 game_time,
+                real_time,
             } => {
-                self.handle_update(&units, &ballistics, game_time);
+                self.handle_update(&units, &ballistics, game_time, real_time);
             }
             Message::Stop => {
                 log::debug!("Stopping!");

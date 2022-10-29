@@ -39,7 +39,13 @@ pub struct DcsWorldUnit {
 }
 
 pub trait Loggable {
-    fn log_as_csv<W: Write>(&self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>);
+    fn log_as_csv<W: Write>(
+        &self,
+        frame_count: i32,
+        frame_time: f64,
+        real_time: f64,
+        writer: &mut csv::Writer<W>,
+    );
 }
 
 impl<'lua> DcsWorldObject {
@@ -105,17 +111,25 @@ impl<'lua> DcsWorldUnit {
 struct FrameObjectRecord<'a> {
     frame_count: i32,
     frame_time: f64,
+    real_time: f64,
     unit_name: &'a str,
     group_name: &'a str,
 }
 
 impl Loggable for DcsWorldObject {
-    fn log_as_csv<W: Write>(&self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
+    fn log_as_csv<W: Write>(
+        &self,
+        frame_count: i32,
+        frame_time: f64,
+        real_time: f64,
+        writer: &mut csv::Writer<W>,
+    ) {
         writer
             .serialize((
                 FrameObjectRecord {
                     frame_count,
                     frame_time,
+                    real_time,
                     unit_name: "",
                     group_name: "",
                 },
@@ -126,12 +140,19 @@ impl Loggable for DcsWorldObject {
 }
 
 impl Loggable for DcsWorldUnit {
-    fn log_as_csv<W: Write>(&self, frame_count: i32, frame_time: f64, writer: &mut csv::Writer<W>) {
+    fn log_as_csv<W: Write>(
+        &self,
+        frame_count: i32,
+        frame_time: f64,
+        real_time: f64,
+        writer: &mut csv::Writer<W>,
+    ) {
         writer
             .serialize((
                 FrameObjectRecord {
                     frame_count,
                     frame_time,
+                    real_time,
                     unit_name: self.unit_name.as_str(),
                     group_name: self.group_name.as_str(),
                 },

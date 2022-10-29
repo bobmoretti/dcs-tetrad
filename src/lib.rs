@@ -8,6 +8,7 @@ use std::sync::{
     Arc,
 };
 use std::thread::JoinHandle;
+use std::time::Instant;
 use std::{fs::File, os::windows::io::FromRawHandle};
 use windows::Win32::System::Console;
 
@@ -23,6 +24,7 @@ struct FullState {
     gui_context: Option<egui::Context>,
     is_gui_shown: Option<gui::ArcFlag>,
     rx_from_gui: Receiver<gui::ClientMessage>,
+    start_time: Instant,
 }
 
 enum LibState {
@@ -106,6 +108,16 @@ fn wait_for_gui_started(rx_from_gui: &Receiver<gui::ClientMessage>) -> gui::ArcF
     h
 }
 
+impl FullState {
+    fn elapsed_time(&self) -> f64 {
+        self.start_time.elapsed().as_secs_f64()
+    }
+}
+
+fn get_elapsed_time() -> f64 {
+    get_lib_state().elapsed_time()
+}
+
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
         let mut console_out = match create_console() {
@@ -167,6 +179,7 @@ impl LibState {
                 gui_context,
                 is_gui_shown: handle,
                 rx_from_gui: rx,
+                start_time: Instant::now(),
             }),
             Self::WorkerStarted { .. } => panic!("Worker already started"),
         }
@@ -249,6 +262,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
 
 #[no_mangle]
 pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
+    let real_time = get_elapsed_time();
     if dcs::is_paused(lua) {
         log::trace!("DCS is paused");
         return Ok(());
@@ -262,11 +276,13 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
         units: units.clone(),
         ballistics: ballistics.clone(),
         game_time: t,
+        real_time: real_time,
     };
     let gui_msg = gui::Message::Update {
         units: units.clone(),
         ballistics: ballistics.clone(),
         game_time: t,
+        real_time: real_time,
     };
 
     send_worker_message(worker_msg);

@@ -19,7 +19,8 @@ struct Gui {
     rx: &'static Receiver<Message>,
     num_units: BoundedVecDeque<i32>,
     num_ballistics: BoundedVecDeque<i32>,
-    frame_times: BoundedVecDeque<f64>,
+    game_times: BoundedVecDeque<f64>,
+    real_times: BoundedVecDeque<f64>,
 }
 
 const PLOT_NUM_PTS: usize = 2048;
@@ -30,6 +31,7 @@ pub enum Message {
         units: Arc<Vec<DcsWorldUnit>>,
         ballistics: Arc<Vec<DcsWorldObject>>,
         game_time: f64,
+        real_time: f64,
     },
 }
 
@@ -43,7 +45,8 @@ impl Gui {
             rx,
             num_units: BoundedVecDeque::new(PLOT_NUM_PTS),
             num_ballistics: BoundedVecDeque::new(PLOT_NUM_PTS),
-            frame_times: BoundedVecDeque::new(PLOT_NUM_PTS),
+            game_times: BoundedVecDeque::new(PLOT_NUM_PTS),
+            real_times: BoundedVecDeque::new(PLOT_NUM_PTS),
         }
     }
 
@@ -58,16 +61,18 @@ impl Gui {
             Message::Start(_context) => {
                 self.num_ballistics.clear();
                 self.num_units.clear();
-                self.frame_times.clear();
+                self.game_times.clear();
             }
             Message::Update {
                 units,
                 ballistics,
                 game_time,
+                real_time,
             } => {
                 self.num_units.push_front(units.len() as i32);
                 self.num_ballistics.push_front(ballistics.len() as i32);
-                self.frame_times.push_front(game_time);
+                self.game_times.push_front(game_time);
+                self.real_times.push_front(real_time);
             }
         };
     }
@@ -94,6 +99,37 @@ fn get_indexed<T>(q: &BoundedVecDeque<T>, index: isize) -> Option<&T> {
     q.get(i)
 }
 
+fn most_recent_time_delta(queue: &BoundedVecDeque<f64>) -> f64 {
+    let t_now = get_indexed(queue, 0).unwrap_or(&0.0);
+    let t_last = get_indexed(queue, 1).unwrap_or(&0.0);
+    let delta_t = t_now - t_last;
+    delta_t
+}
+
+fn make_time_line(
+    ref_times: &BoundedVecDeque<f64>,
+    times: &BoundedVecDeque<f64>,
+    name: &str,
+) -> (Line, Line) {
+    let mut time_pairs: Vec<[f64; 2]> = Vec::default();
+    for idx in 1..times.len() {
+        time_pairs.push([ref_times[idx], times[idx - 1] - times[idx]]);
+    }
+    let fps_pts: PlotPoints = time_pairs
+        .iter()
+        .map(|[t, dt]| {
+            let mut inv = 1.0 / *dt;
+            if inv.is_infinite() || inv.is_nan() {
+                inv = 0.0;
+            }
+            [*t, inv]
+        })
+        .collect();
+    let time_line = Line::new(time_pairs).name(name);
+    let fps_line = Line::new(fps_pts).name(name);
+    (time_line, fps_line)
+}
+
 impl eframe::App for Gui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -113,10 +149,10 @@ impl eframe::App for Gui {
                 ));
                 ui.end_row();
 
-                let u_line = make_obj_count_line(&self.num_units, &self.frame_times, "Units");
+                let u_line = make_obj_count_line(&self.num_units, &self.game_times, "Units");
                 let b_line = make_obj_count_line(
                     &self.num_ballistics,
-                    &self.frame_times,
+                    &self.game_times,
                     "Ballistic objects",
                 );
 
@@ -130,46 +166,37 @@ impl eframe::App for Gui {
                     });
                 ui.end_row();
 
-                let t_now = get_indexed(&self.frame_times, 0).unwrap_or(&0.0);
-                let t_last = get_indexed(&self.frame_times, 1).unwrap_or(&0.0);
-                let delta_t = t_now - t_last;
-                ui.heading(format!("Last frame time: {:0.02} ms", delta_t * 1000.));
+                let last_frame_game_time_ms = most_recent_time_delta(&self.game_times) * 1000.0;
+                let last_frame_real_time_ms = most_recent_time_delta(&self.real_times) * 1000.0;
+                ui.heading(format!(
+                    "Last frame game time: {:0.02} ms, real_time: {:0.02} ms",
+                    last_frame_game_time_ms, last_frame_real_time_ms
+                ));
                 ui.end_row();
-                let mut times: Vec<[f64; 2]> = Vec::default();
-                for idx in 1..self.frame_times.len() {
-                    times.push([
-                        self.frame_times[idx],
-                        self.frame_times[idx - 1] - self.frame_times[idx],
-                    ]);
-                }
-                let fps_pts: PlotPoints = times
-                    .iter()
-                    .map(|[t, dt]| {
-                        let mut inv = 1.0 / *dt;
-                        if inv.is_infinite() || inv.is_nan() {
-                            inv = 0.0;
-                        }
-                        [*t, inv]
-                    })
-                    .collect();
-                let time_line = Line::new(times);
+                let (game_time_line, game_time_fps_line) =
+                    make_time_line(&self.game_times, &self.game_times, "Game time");
+                let (real_time_line, _real_time_fps_line) =
+                    make_time_line(&self.game_times, &self.real_times, "Real time");
 
                 Plot::new("Frame times")
                     .width(1792.0)
                     .height(256.0)
-                    .show(ui, |plot_ui| plot_ui.line(time_line));
+                    .legend(Legend::default().position(Corner::RightBottom))
+                    .show(ui, |plot_ui| {
+                        plot_ui.line(game_time_line);
+                        plot_ui.line(real_time_line);
+                    });
 
                 ui.end_row();
-                let fps_line = Line::new(fps_pts);
 
-                let fps = 1.0 / delta_t;
+                let fps = 1.0 / last_frame_game_time_ms;
                 ui.heading(format!("FPS: {:.2}", fps));
                 ui.end_row();
 
                 Plot::new("FPS")
                     .width(1792.0)
                     .height(256.0)
-                    .show(ui, |plot_ui| plot_ui.line(fps_line));
+                    .show(ui, |plot_ui| plot_ui.line(game_time_fps_line));
                 ui.end_row();
             });
         });
