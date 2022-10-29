@@ -18,6 +18,7 @@ mod gui;
 pub mod worker;
 
 struct FullState {
+    is_gui_enabled: bool,
     worker_tx: Sender<worker::Message>,
     worker_join: JoinHandle<()>,
     gui_tx: Sender<gui::Message>,
@@ -118,6 +119,14 @@ fn get_elapsed_time() -> f64 {
     get_lib_state().elapsed_time()
 }
 
+fn is_gui_shown() -> bool {
+    get_lib_state()
+        .is_gui_shown
+        .as_ref()
+        .unwrap()
+        .load(std::sync::atomic::Ordering::SeqCst)
+}
+
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
         let mut console_out = match create_console() {
@@ -163,16 +172,18 @@ impl LibState {
 
     fn init_session(self, config: config::Config, mission_name: String) -> Self {
         let (worker_tx, worker_rx) = std::sync::mpsc::channel();
+        let cloned_config = config.clone();
         log::info!("Spawning worker thread");
 
-        let worker_join = std::thread::spawn(|| {
+        let worker_join = std::thread::spawn(move || {
             log::info!("Worker thread");
-            worker::entry(config, mission_name, worker_rx);
+            worker::entry(config.clone(), mission_name, worker_rx);
         });
         log::info!("Setting GUI context");
 
         match self {
             Self::GuiStarted(gui_tx, rx, handle, gui_context) => Self::WorkerStarted(FullState {
+                is_gui_enabled: cloned_config.clone().enable_gui,
                 worker_tx,
                 worker_join,
                 gui_tx,
@@ -213,8 +224,11 @@ fn send_worker_message(message: worker::Message) {
 }
 
 fn send_gui_message(message: gui::Message) {
+    if !get_lib_state().is_gui_enabled {
+        return;
+    }
     log::trace!("sending message to gui");
-    get_lib_state().gui_tx.send(message).unwrap();
+    get_lib_state().gui_tx.send(message).unwrap_or(());
     if let Some(ctx) = &get_lib_state().gui_context {
         ctx.request_repaint();
     }
@@ -240,12 +254,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     }
 
     if config.enable_gui {
-        if get_lib_state()
-            .is_gui_shown
-            .as_ref()
-            .unwrap()
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if is_gui_shown() {
             let ctx = get_lib_state().gui_context.clone();
             log::debug!("Starting GUI");
             send_gui_message(gui::Message::Start(ctx.unwrap()));
