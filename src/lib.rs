@@ -8,8 +8,9 @@ use std::sync::{
     Arc,
 };
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{fs::File, os::windows::io::FromRawHandle};
+use timer::Timer;
 use windows::Win32::System::Console;
 
 mod config;
@@ -26,6 +27,9 @@ struct FullState {
     is_gui_shown: Option<gui::ArcFlag>,
     rx_from_gui: Receiver<gui::ClientMessage>,
     start_time: Instant,
+    gui_draw_timer: Timer,
+    gui_draw_timer_guard: Option<timer::Guard>,
+    gui_draw_interval: f64,
 }
 
 enum LibState {
@@ -191,7 +195,11 @@ impl LibState {
                 is_gui_shown: handle,
                 rx_from_gui: rx,
                 start_time: Instant::now(),
+                gui_draw_timer: Timer::new(),
+                gui_draw_timer_guard: None,
+                gui_draw_interval: cloned_config.gui_update_interval,
             }),
+
             Self::WorkerStarted { .. } => panic!("Worker already started"),
         }
     }
@@ -223,6 +231,10 @@ fn send_worker_message(message: worker::Message) {
         .expect("Should be able to send message");
 }
 
+fn is_real_time_gui() -> bool {
+    get_lib_state().gui_draw_interval <= 0.0
+}
+
 fn send_gui_message(message: gui::Message) {
     if !get_lib_state().is_gui_enabled {
         return;
@@ -230,7 +242,41 @@ fn send_gui_message(message: gui::Message) {
     log::trace!("sending message to gui");
     get_lib_state().gui_tx.send(message).unwrap_or(());
     if let Some(ctx) = &get_lib_state().gui_context {
-        ctx.request_repaint();
+        if is_real_time_gui() {
+            ctx.request_repaint();
+        }
+    }
+}
+
+fn start_gui(config: &config::Config) {
+    if config.gui_update_interval > 0.0 {
+        let repeat =
+            chrono::Duration::from_std(Duration::from_secs_f64(config.gui_update_interval))
+                .unwrap();
+        let guard = get_lib_state()
+            .gui_draw_timer
+            .schedule_repeating(repeat, || {
+                log::trace!("Timer fired");
+                if is_gui_shown() {
+                    get_lib_state()
+                        .gui_context
+                        .as_ref()
+                        .unwrap()
+                        .request_repaint();
+                }
+            });
+        get_lib_state().gui_draw_timer_guard = Some(guard)
+    }
+
+    if is_gui_shown() {
+        let ctx = get_lib_state().gui_context.clone();
+        log::debug!("Starting GUI");
+        send_gui_message(gui::Message::Start(ctx.unwrap()));
+    } else {
+        log::debug!("GUI already running, not starting a new GUI");
+        send_gui_message(gui::Message::Start(
+            get_lib_state().gui_context.clone().unwrap(),
+        ));
     }
 }
 
@@ -254,16 +300,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     }
 
     if config.enable_gui {
-        if is_gui_shown() {
-            let ctx = get_lib_state().gui_context.clone();
-            log::debug!("Starting GUI");
-            send_gui_message(gui::Message::Start(ctx.unwrap()));
-        } else {
-            log::debug!("GUI already running, not starting a new GUI");
-            send_gui_message(gui::Message::Start(
-                get_lib_state().gui_context.clone().unwrap(),
-            ));
-        }
+        start_gui(&config);
     }
 
     Ok(0)

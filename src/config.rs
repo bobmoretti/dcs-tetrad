@@ -10,6 +10,7 @@ pub struct Config {
     pub enable_object_log: bool,
     pub enable_framerate_log: bool,
     pub enable_gui: bool,
+    pub gui_update_interval: f64,
 }
 
 impl Default for Config {
@@ -22,6 +23,7 @@ impl Default for Config {
             enable_object_log: false,
             enable_framerate_log: true,
             enable_gui: true,
+            gui_update_interval: -1.0,
         }
     }
 }
