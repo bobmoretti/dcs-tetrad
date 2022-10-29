@@ -189,7 +189,7 @@ impl eframe::App for Gui {
 
                 ui.end_row();
 
-                let fps = 1.0 / last_frame_game_time_ms;
+                let fps = 1000.0 / last_frame_game_time_ms;
                 ui.heading(format!("FPS: {:.2}", fps));
                 ui.end_row();
 
