@@ -124,11 +124,10 @@ fn get_elapsed_time() -> f64 {
 }
 
 fn is_gui_shown() -> bool {
-    get_lib_state()
-        .is_gui_shown
-        .as_ref()
-        .unwrap()
-        .load(std::sync::atomic::Ordering::SeqCst)
+    match get_lib_state().is_gui_shown.as_ref() {
+        Some(flag) => flag.load(std::sync::atomic::Ordering::SeqCst),
+        None => false,
+    }
 }
 
 impl LibState {
