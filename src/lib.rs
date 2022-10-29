@@ -295,7 +295,9 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     };
 
     send_worker_message(worker_msg);
-    send_gui_message(gui_msg);
+    if is_gui_shown() {
+        send_gui_message(gui_msg);
+    }
     Ok(())
 }
 
