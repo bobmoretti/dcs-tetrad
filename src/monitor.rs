@@ -15,6 +15,7 @@ struct FrameState {
     num_ballistics: i32,
     real_time: f64,
     game_time: f64,
+    lib_time: f64,
 }
 
 pub struct Monitor {
@@ -38,6 +39,34 @@ struct FrameLog {
     num_ballistics: VecDeque<i32>,
     real_times: VecDeque<OrderedFloat<f64>>,
     game_times: VecDeque<OrderedFloat<f64>>,
+    lib_times: VecDeque<OrderedFloat<f64>>,
+}
+
+fn get_stats<T>(v: &VecDeque<T>) -> Option<(T, T, f64)>
+where
+    T: Copy + Ord + Sum + AsPrimitive<f64>,
+{
+    let minval = *v.iter().min()?;
+    let maxval = *v.iter().max()?;
+
+    let total: f64 = v.iter().copied().sum::<T>().as_();
+
+    Some((minval, maxval, total / v.len() as f64))
+}
+
+fn time_stats_to_float<T>((t0, t1, t2): (T, T, f64)) -> (f64, f64, f64)
+where
+    T: AsPrimitive<f64>,
+{
+    (t0.as_(), t1.as_(), t2.as_())
+}
+
+fn float_stats<T>(v: &VecDeque<T>) -> Option<(f64, f64, f64)>
+where
+    T: Copy + Ord + Sum + AsPrimitive<f64>,
+{
+    let result = get_stats(v)?;
+    Some(time_stats_to_float::<T>(result))
 }
 
 impl FrameLog {
@@ -48,6 +77,15 @@ impl FrameLog {
             .push_back(OrderedFloat(state.real_time - last_real_time));
         self.game_times
             .push_back(OrderedFloat(state.game_time - last_game_time));
+        self.lib_times.push_back(OrderedFloat(state.lib_time));
+    }
+
+    fn reset(&mut self) {
+        self.num_units.clear();
+        self.num_ballistics.clear();
+        self.game_times.clear();
+        self.real_times.clear();
+        self.lib_times.clear();
     }
 
     fn is_empty(&self) -> bool {
@@ -65,14 +103,6 @@ impl FrameLog {
             return;
         }
 
-        let Some((a, b, c)) = get_stats(&self.game_times) else {
-            log::error!("Real times vector was unexpectedly empty");
-            return;
-        };
-
-        let mut min_time = f64::from(a);
-        let mut max_time = f64::from(b);
-        let mut mean_time = f64::from(c);
         let Some((_, max_units, _)) = get_stats(&self.num_units) else {
             log::error!("Units vector was unexpectedly empty");
             return;
@@ -83,7 +113,12 @@ impl FrameLog {
             return;
         };
 
-        let lvl = if max_time < 0.1 {
+        let Some((g_min, g_max, g_mean)) = float_stats(&self.game_times) else {
+            log::error!("Real times vector was unexpectedly empty");
+            return;
+        };
+
+        let lvl = if g_min < 0.1 {
             log::Level::Info
         } else {
             log::Level::Warn
@@ -92,60 +127,51 @@ impl FrameLog {
         log::log!(
             lvl,
             "Frame times (min/max/avg): {:.3}, {:.3}, {:.3} milliseconds",
-            min_time * 1000.0,
-            max_time * 1000.0,
-            mean_time * 1000.0,
+            g_min * 1000.0,
+            g_max * 1000.0,
+            g_mean * 1000.0,
         );
-        let Some((d, e, f)) = get_stats(&self.real_times) else {
+
+        let Some((r_min, r_max, r_mean)) = float_stats(&self.real_times) else {
             log::error!("Real times vector was unexpectedly empty");
             return;
         };
 
-        min_time = f64::from(d);
-        max_time = f64::from(e);
-        mean_time = f64::from(f);
-
         log::log!(
             lvl,
             "Real times (min/max/avg): {:.3}, {:.3}, {:.3} milliseconds",
-            min_time * 1000.0,
-            max_time * 1000.0,
-            mean_time * 1000.0,
+            r_min * 1000.0,
+            r_max * 1000.0,
+            r_mean * 1000.0,
         );
 
-        log::log!(lvl, "Average FPS: {:.03}", 1.0 / mean_time);
+        log::log!(lvl, "Average FPS: {:.03}", 1.0 / g_mean);
         log::log!(
             lvl,
             "Unit count: {}, ballistics count: {}",
             max_units,
             max_ballistics
         );
+
+        let Some((l_min, l_max, l_mean)) = float_stats(&self.lib_times) else {
+            log::error!("Lib times vector was unexpectedly empty");
+            return;
+        };
+
+        log::log!(
+            lvl,
+            "Time spent in game loop (min/max/avg): {:.6}, {:.6}, {:.6}",
+            l_min,
+            l_max,
+            l_mean
+        );
+
         log::log!(
             lvl,
             "----------------------------------------------------------------"
         );
     }
-
-    fn reset(&mut self) {
-        self.num_units.clear();
-        self.num_ballistics.clear();
-        self.game_times.clear();
-        self.real_times.clear();
-    }
 }
-
-pub fn get_stats<T>(v: &VecDeque<T>) -> Option<(T, T, f64)>
-where
-    T: Copy + Ord + Sum + AsPrimitive<f64>,
-{
-    let minval = *v.iter().min()?;
-    let maxval = *v.iter().max()?;
-
-    let total: f64 = v.iter().copied().sum::<T>().as_();
-
-    Some((minval, maxval, total / v.len() as f64))
-}
-
 impl MonitorImpl {
     fn update_log(&mut self, state: &FrameState) {
         self.frame_log
@@ -202,12 +228,14 @@ impl Monitor {
         ballistics: &[DcsWorldObject],
         real_time: f64,
         game_time: f64,
+        lib_time: f64,
     ) {
         let fs = FrameState {
             num_units: units.len() as i32,
             num_ballistics: ballistics.len() as i32,
             real_time,
             game_time,
+            lib_time,
         };
         self.tx_to_thread.send(Message::FrameUpdate(fs)).unwrap();
     }

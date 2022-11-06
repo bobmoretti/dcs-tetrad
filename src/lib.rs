@@ -33,6 +33,7 @@ struct FullState {
     gui_draw_timer: Timer,
     gui_draw_timer_guard: Option<timer::Guard>,
     gui_draw_interval: f64,
+    lib_last_elapsed_time: f64,
 }
 
 enum LibState {
@@ -133,6 +134,10 @@ fn is_gui_shown() -> bool {
     }
 }
 
+fn update_lib_time(t: f64) {
+    get_lib_state().lib_last_elapsed_time = t;
+}
+
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
         let mut console_out = match create_console() {
@@ -204,6 +209,7 @@ impl LibState {
                 gui_draw_timer: Timer::new(),
                 gui_draw_timer_guard: None,
                 gui_draw_interval: cloned_config.gui_update_interval,
+                lib_last_elapsed_time: 0.0,
             }),
 
             Self::WorkerStarted { .. } => panic!("Worker already started"),
@@ -324,12 +330,13 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     let t = dcs::get_model_time(lua);
     let b = dcs::get_ballistics_objects(lua);
     let u = dcs::get_unit_objects(lua);
+    let lib_time = get_lib_state().lib_last_elapsed_time;
 
     get_lib_state()
         .monitor
         .as_mut()
         .unwrap()
-        .update(&u, &b, real_time, t);
+        .update(&u, &b, real_time, t, lib_time);
 
     let ballistics = Arc::new(b);
     let units = Arc::new(u);
@@ -350,6 +357,7 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     if is_gui_shown() {
         send_gui_message(gui_msg);
     }
+    update_lib_time(get_elapsed_time() - real_time);
     Ok(())
 }
 
