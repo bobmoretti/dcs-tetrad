@@ -1,6 +1,7 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use mlua::prelude::{LuaResult, LuaTable};
 use mlua::Lua;
+use monitor::Monitor;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{
@@ -16,12 +17,14 @@ use windows::Win32::System::Console;
 mod config;
 mod dcs;
 mod gui;
+mod monitor;
 pub mod worker;
 
 struct FullState {
     is_gui_enabled: bool,
     worker_tx: Sender<worker::Message>,
     worker_join: JoinHandle<()>,
+    monitor: Option<Monitor>,
     gui_tx: Sender<gui::Message>,
     gui_context: Option<egui::Context>,
     is_gui_shown: Option<gui::ArcFlag>,
@@ -179,9 +182,12 @@ impl LibState {
         log::info!("Spawning worker thread");
 
         let worker_join = std::thread::spawn(move || {
-            log::info!("Worker thread");
+            log::info!("Inside of worker thread");
             worker::entry(config.clone(), mission_name, worker_rx);
         });
+
+        let monitor = Some(Monitor::new());
+
         log::info!("Setting GUI context");
 
         match self {
@@ -189,6 +195,7 @@ impl LibState {
                 is_gui_enabled: cloned_config.clone().enable_gui,
                 worker_tx,
                 worker_join,
+                monitor,
                 gui_tx,
                 gui_context,
                 is_gui_shown: handle,
@@ -315,8 +322,17 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     log::trace!("Frame begun");
 
     let t = dcs::get_model_time(lua);
-    let ballistics = Arc::new(dcs::get_ballistics_objects(lua));
-    let units = Arc::new(dcs::get_unit_objects(lua));
+    let b = dcs::get_ballistics_objects(lua);
+    let u = dcs::get_unit_objects(lua);
+
+    get_lib_state()
+        .monitor
+        .as_mut()
+        .unwrap()
+        .update(&u, &b, real_time, t);
+
+    let ballistics = Arc::new(b);
+    let units = Arc::new(u);
     let worker_msg = worker::Message::Update {
         units: units.clone(),
         ballistics: ballistics.clone(),
@@ -344,7 +360,14 @@ pub fn on_frame_end(_lua: &Lua, _: ()) -> LuaResult<()> {
 
 #[no_mangle]
 pub fn stop(_lua: &Lua, _: ()) -> LuaResult<()> {
+    log::debug!("Mission stopping");
     send_worker_message(worker::Message::Stop);
+    let monitor = std::mem::take(&mut get_lib_state().monitor);
+    let handle = monitor.unwrap().stop();
+    handle.join().unwrap_or_else(|_| {
+        log::error!("Failed to join monitor thread");
+    });
+
     if let Some(LibState::WorkerStarted(state)) = unsafe { LIB_STATE.take() } {
         state.worker_join.join().unwrap();
         unsafe {

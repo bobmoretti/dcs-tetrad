@@ -597,6 +597,7 @@ dependencies = [
  "mlua",
  "num",
  "once_cell",
+ "ordered-float",
  "serde",
  "timer",
  "windows",
@@ -1595,6 +1596,15 @@ name = "once_cell"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e82dad04139b71a90c080c8463fe0dc7902db5192d939bd0950f074d014339e1"
+
+[[package]]
+name = "ordered-float"
+version = "3.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f74e330193f90ec45e2b257fa3ef6df087784157ac1ad2c1e71c62837b03aa7"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "osmesa-sys"
