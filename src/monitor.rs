@@ -16,6 +16,9 @@ struct FrameState {
     real_time: f64,
     game_time: f64,
     lib_time: f64,
+    sys_cpu: i32,
+    sys_wall: i32,
+    proc_cpu: i32,
 }
 
 pub struct Monitor {
@@ -40,6 +43,9 @@ struct FrameLog {
     real_times: VecDeque<OrderedFloat<f64>>,
     game_times: VecDeque<OrderedFloat<f64>>,
     lib_times: VecDeque<OrderedFloat<f64>>,
+    sys_cpu_times: VecDeque<i32>,
+    sys_wall_times: VecDeque<i32>,
+    proc_cpu_times: VecDeque<i32>,
 }
 
 fn get_stats<T>(v: &VecDeque<T>) -> Option<(T, T, f64)>
@@ -69,6 +75,21 @@ where
     Some(time_stats_to_float::<T>(result))
 }
 
+fn log_times(series: &VecDeque<i32>, totals: &VecDeque<i32>, name: &str, lvl: log::Level) {
+    let result: f64 = series
+        .iter()
+        .zip(totals.iter())
+        .filter(|(_, y)| **y > 0)
+        .map(|(x, y)| -> f64 {
+            let xf = *x as f64;
+            let yf = *y as f64;
+            xf / yf
+        })
+        .sum::<f64>()
+        / series.len() as f64;
+    log::log!(lvl, "{} {:.3}%", name, result * 100.0);
+}
+
 impl FrameLog {
     fn update(&mut self, state: &FrameState, last_game_time: f64, last_real_time: f64) {
         self.num_units.push_back(state.num_units);
@@ -78,6 +99,9 @@ impl FrameLog {
         self.game_times
             .push_back(OrderedFloat(state.game_time - last_game_time));
         self.lib_times.push_back(OrderedFloat(state.lib_time));
+        self.sys_cpu_times.push_back(state.sys_cpu);
+        self.sys_wall_times.push_back(state.sys_wall);
+        self.proc_cpu_times.push_back(state.proc_cpu);
     }
 
     fn reset(&mut self) {
@@ -86,6 +110,9 @@ impl FrameLog {
         self.game_times.clear();
         self.real_times.clear();
         self.lib_times.clear();
+        self.sys_cpu_times.clear();
+        self.sys_wall_times.clear();
+        self.proc_cpu_times.clear();
     }
 
     fn is_empty(&self) -> bool {
@@ -151,6 +178,19 @@ impl FrameLog {
             "Unit count: {}, ballistics count: {}",
             max_units,
             max_ballistics
+        );
+
+        log_times(
+            &self.proc_cpu_times,
+            &self.sys_wall_times,
+            "DCS CPU load",
+            lvl,
+        );
+        log_times(
+            &self.sys_cpu_times,
+            &self.sys_wall_times,
+            "Total CPU load",
+            lvl,
         );
 
         let Some((l_min, l_max, l_mean)) = float_stats(&self.lib_times) else {
@@ -229,6 +269,9 @@ impl Monitor {
         real_time: f64,
         game_time: f64,
         lib_time: f64,
+        sys_cpu: i32,
+        sys_wall: i32,
+        proc_cpu: i32,
     ) {
         let fs = FrameState {
             num_units: units.len() as i32,
@@ -236,6 +279,9 @@ impl Monitor {
             real_time,
             game_time,
             lib_time,
+            sys_cpu,
+            sys_wall,
+            proc_cpu,
         };
         self.tx_to_thread.send(Message::FrameUpdate(fs)).unwrap();
     }

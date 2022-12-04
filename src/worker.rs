@@ -13,6 +13,8 @@ pub enum Message {
         ballistics: Arc<Vec<DcsWorldObject>>,
         game_time: f64,
         real_time: f64,
+        sys_time: (i32, i32),
+        proc_time: (i32, i32),
     },
     Stop,
 }
@@ -25,6 +27,8 @@ impl std::fmt::Debug for Message {
                 ballistics,
                 game_time,
                 real_time: _,
+                sys_time: _,
+                proc_time: _,
             } => f.write_fmt(format_args!(
                 "Update at t={} with {} units and {} ballistics objects",
                 game_time,
@@ -86,12 +90,18 @@ fn log_frame(
     n: i32,
     num_units: i32,
     num_ballistics: i32,
+    sys_cpu_time: i32,
+    sys_wall_time: i32,
+    proc_cpu_time: i32,
 ) {
-    writer.write_field((n - 1).to_string()).unwrap();
+    writer.write_field((n).to_string()).unwrap();
     writer.write_field(format!("{:.8}", game_time)).unwrap();
     writer.write_field(format!("{:.8}", real_time)).unwrap();
     writer.write_field(num_units.to_string()).unwrap();
     writer.write_field(num_ballistics.to_string()).unwrap();
+    writer.write_field(sys_cpu_time.to_string()).unwrap();
+    writer.write_field(sys_wall_time.to_string()).unwrap();
+    writer.write_field(proc_cpu_time.to_string()).unwrap();
     writer.write_record(None::<&[u8]>).unwrap();
 }
 
@@ -108,17 +118,39 @@ struct Logger {
 
 impl Logger {
     fn new(frame_writer: Option<OutputWriter>, object_writer: Option<OutputWriter>) -> Self {
-        Self {
+        let mut me = Self {
             prev_game_time: 0.0,
             current_real_time: 0.0,
             most_recent_game_time: 0.0,
             frame_count: 0,
             frame_writer,
             object_writer,
-        }
+        };
+        me.frame_writer
+            .as_mut()
+            .unwrap()
+            .write_record(&[
+                "frame_count",
+                "t_game",
+                "t_real",
+                "units",
+                "ballistics",
+                "sys_cpu",
+                "sys_wall",
+                "proc_cpu",
+            ])
+            .unwrap();
+        me
     }
 
-    fn log_frame(&mut self, t: f64, units: &[DcsWorldUnit], ballistics: &[DcsWorldObject]) {
+    fn log_frame(
+        &mut self,
+        t: f64,
+        units: &[DcsWorldUnit],
+        ballistics: &[DcsWorldObject],
+        sys_time: (i32, i32),
+        proc_time: (i32, i32),
+    ) {
         log_frame(
             self.frame_writer.as_mut().unwrap(),
             t,
@@ -126,6 +158,9 @@ impl Logger {
             self.frame_count,
             units.len() as i32,
             ballistics.len() as i32,
+            sys_time.0,
+            sys_time.1,
+            proc_time.0,
         );
     }
 
@@ -160,6 +195,8 @@ impl Logger {
         ballistics: &Vec<DcsWorldObject>,
         game_time: f64,
         real_time: f64,
+        sys_time: (i32, i32),
+        proc_time: (i32, i32),
     ) {
         let n = self.frame_count;
         log::trace!("New frame message, n = {}, t = {}", n, game_time);
@@ -168,11 +205,18 @@ impl Logger {
         self.most_recent_game_time = game_time;
         self.current_real_time = real_time;
         if self.frame_writer.is_some() {
-            self.log_frame(game_time, units.as_slice(), &ballistics.as_slice());
+            self.log_frame(
+                game_time,
+                units.as_slice(),
+                &ballistics.as_slice(),
+                sys_time,
+                proc_time,
+            );
         }
         if self.object_writer.is_some() {
             self.log_objects(units.as_slice(), ballistics.as_slice());
         }
+        self.frame_count += 1;
     }
 
     fn handle_message(&mut self, msg: Message) -> bool {
@@ -182,8 +226,17 @@ impl Logger {
                 ballistics,
                 game_time,
                 real_time,
+                sys_time,
+                proc_time,
             } => {
-                self.handle_update(&units, &ballistics, game_time, real_time);
+                self.handle_update(
+                    &units,
+                    &ballistics,
+                    game_time,
+                    real_time,
+                    sys_time,
+                    proc_time,
+                );
             }
             Message::Stop => {
                 log::debug!("Stopping!");

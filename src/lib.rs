@@ -13,12 +13,16 @@ use std::time::{Duration, Instant};
 use std::{fs::File, os::windows::io::FromRawHandle};
 use timer::Timer;
 use windows::Win32::System::Console;
+use windows::Win32::System::SystemInformation::GetSystemInfo;
+use windows::Win32::System::SystemInformation::SYSTEM_INFO;
 
 mod config;
 mod dcs;
 mod gui;
 mod monitor;
+mod perf_monitor;
 pub mod worker;
+use perf_monitor::PerfMonitor;
 
 struct FullState {
     is_gui_enabled: bool,
@@ -34,6 +38,7 @@ struct FullState {
     gui_draw_timer_guard: Option<timer::Guard>,
     gui_draw_interval: f64,
     lib_last_elapsed_time: f64,
+    perf_mon: PerfMonitor,
 }
 
 enum LibState {
@@ -138,6 +143,18 @@ fn update_lib_time(t: f64) {
     get_lib_state().lib_last_elapsed_time = t;
 }
 
+fn get_num_cpus() -> i32 {
+    get_system_info().dwNumberOfProcessors as i32
+}
+
+fn get_system_info() -> SYSTEM_INFO {
+    unsafe {
+        let mut sys_info: SYSTEM_INFO = SYSTEM_INFO::default();
+        GetSystemInfo(&mut sys_info as *mut SYSTEM_INFO);
+        sys_info
+    }
+}
+
 impl LibState {
     fn init(config: &config::Config) -> LuaResult<Self> {
         let mut console_out = match create_console() {
@@ -195,6 +212,11 @@ impl LibState {
 
         log::info!("Setting GUI context");
 
+        // populate the perf monitor with initial values so that the first CPU times will be reasonable
+        let mut pm = PerfMonitor::default();
+        pm.update_process_time();
+        pm.update_system_time();
+
         match self {
             Self::GuiStarted(gui_tx, rx, handle, gui_context) => Self::WorkerStarted(FullState {
                 is_gui_enabled: cloned_config.clone().enable_gui,
@@ -210,6 +232,7 @@ impl LibState {
                 gui_draw_timer_guard: None,
                 gui_draw_interval: cloned_config.gui_update_interval,
                 lib_last_elapsed_time: 0.0,
+                perf_mon: pm,
             }),
 
             Self::WorkerStarted { .. } => panic!("Worker already started"),
@@ -301,6 +324,7 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
     }
     let mission_name = dcs::get_mission_name(lua);
     log::info!("Loaded in mission {}", mission_name);
+    log::info!("System info: {} CPUs", get_num_cpus());
 
     unsafe {
         LIB_STATE = Some(
@@ -321,10 +345,15 @@ pub fn start(lua: &Lua, config: config::Config) -> LuaResult<i32> {
 #[no_mangle]
 pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     let real_time = get_elapsed_time();
+
+    let proc_times = get_lib_state().perf_mon.update_process_time();
+    let sys_times = get_lib_state().perf_mon.update_system_time();
+
     if dcs::is_paused(lua) {
         log::trace!("DCS is paused");
         return Ok(());
     }
+
     log::trace!("Frame begun");
 
     let t = dcs::get_model_time(lua);
@@ -332,11 +361,16 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
     let u = dcs::get_unit_objects(lua);
     let lib_time = get_lib_state().lib_last_elapsed_time;
 
-    get_lib_state()
-        .monitor
-        .as_mut()
-        .unwrap()
-        .update(&u, &b, real_time, t, lib_time);
+    get_lib_state().monitor.as_mut().unwrap().update(
+        &u,
+        &b,
+        real_time,
+        t,
+        lib_time,
+        sys_times.0,
+        sys_times.1,
+        proc_times.0,
+    );
 
     let ballistics = Arc::new(b);
     let units = Arc::new(u);
@@ -345,7 +379,10 @@ pub fn on_frame_begin(lua: &Lua, _: ()) -> LuaResult<()> {
         ballistics: ballistics.clone(),
         game_time: t,
         real_time: real_time,
+        proc_time: proc_times,
+        sys_time: sys_times,
     };
+
     let gui_msg = gui::Message::Update {
         units: units.clone(),
         ballistics: ballistics.clone(),
