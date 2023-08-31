@@ -25,7 +25,8 @@ Once installation and configuration is complete. DCS Tetrad logger will run auto
 
 Upon mission completion Tetrad will export at `Saved Games\DCS.openbeta_server\Logs\Tetrad`. Tetard will export a Log File and CSV files in `Saved Games\DCS.openbeta_server\Logs\Tetrad\frames` and `Saved Games\DCS.openbeta_server\Logs\Tetrad\objects` (Objects CSV will only be logged if enable_object_log is set to True in the configuration file).
 
-Note: The CSV files are compressed using .zstd format. To decompress .zstd files you must use programs simillar to: https://github.com/mcmilk/7-Zip-zstd.
+Note: The CSV files are compressed using .zstd format. Unfortunately, the popular 7zip app on windows does not support this fomat. However, you can use a fork of 7zip with zstd support: https://github.com/mcmilk/7-Zip-zstd.
+
 
 **Interpreting Raw Data**
 The frame excels will export the following variables:
