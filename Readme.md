@@ -30,11 +30,12 @@ Note: The CSV files are compressed using .zstd format. Unfortunately, the popula
 
 **Interpreting Raw Data**
 The frame excels will export the following variables:
-1. t_game: Ingame Frame Time (Note: The time is added to the last frame time with each tick)
-2. t_real: Real Frame Time (Note: The time is added to the last frame time with each tick)
-3. units: Number of Units Simulated by the Server during the tick
-4. ballistics: Number of Ballistic Objects (Missiles, Gun Rounds, Bombs, etc) simulated by the server during the tick.
+1. `t_game`: cumulative elapsed in-game simulation time (Note: the time is added to the last frame time with each tick)
+2. `t_real`: cumulative elapsed real world time (Note: the time is added to the last frame time with each tick)
+3. `units`: Number of Units Simulated by the Server during the tick
+4. `ballistics`: Number of Ballistic Objects (Missiles, Gun Rounds, Bombs, etc) simulated by the server during the tick.
 5. SYS_CPU, SYS_WALL, PROC_CPU are WIN32 CPU Performacne Metrics 
+
 
 ## For developers
 
